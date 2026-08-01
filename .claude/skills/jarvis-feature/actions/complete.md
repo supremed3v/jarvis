@@ -43,6 +43,7 @@ Set:
 
 - Status: Not Started
 - Clear active feature data
+- Update the feature index if not already of current spec and run relevant scripts for /scripts folder.
 
 9. Append feature summary to history.
 
