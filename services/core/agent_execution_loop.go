@@ -41,19 +41,22 @@ type Plan struct {
 
 // ContextAnalyzer inspects task and returns whatever contextual analysis a
 // Planner needs (SPEC-0022's Analyze Context stage). Optional; a loop with
-// no ContextAnalyzer configured uses an empty analysis map.
+// no ContextAnalyzer configured uses an empty analysis map. ContextAnalyzer
+// must respect ctx cancellation.
 type ContextAnalyzer func(ctx context.Context, task *types.Task) (map[string]any, error)
 
 // Planner produces the Plan an ExecutionLoop carries out for task, given the
 // analysis ContextAnalyzer (or an empty map) produced (SPEC-0022's Create
 // Plan stage). Required: an ExecutionLoop cannot be constructed without one.
+// Planner must respect ctx cancellation.
 type Planner func(ctx context.Context, task *types.Task, analysis map[string]any) (Plan, error)
 
 // ToolCaller invokes the named tool with input on the loop's behalf,
 // returning the tool's output (SPEC-0022's Execute Actions stage, for any
 // Step naming a Tool). Required only if a Plan ever produces a Step with a
 // non-empty Tool; a loop with no ToolCaller configured fails such a Step
-// with EXECUTION_LOOP_NO_TOOL_CALLER rather than panicking.
+// with EXECUTION_LOOP_NO_TOOL_CALLER rather than panicking. ToolCaller must
+// respect ctx cancellation.
 type ToolCaller func(ctx context.Context, tool string, input map[string]any) (map[string]any, error)
 
 // ResultEvaluator inspects a completed Step's outcome and reports whether it
@@ -108,7 +111,8 @@ func WithResultEvaluator(e ResultEvaluator) ExecutionLoopOption {
 	return func(l *ExecutionLoop) { l.evaluate = e }
 }
 
-// WithExecutionLoopLogger attaches a Logger used to report step failures.
+// WithExecutionLoopLogger attaches a Logger used to report every stage's
+// failures (cancellation, Analyze Context, Create Plan, and each Step).
 // Optional; a loop with no logger runs silently.
 func WithExecutionLoopLogger(log *logger.Logger) ExecutionLoopOption {
 	return func(l *ExecutionLoop) { l.log = log }
@@ -146,20 +150,30 @@ func (l *ExecutionLoop) Run(ctx context.Context, task *types.Task) (map[string]a
 			"cannot run the execution loop for a nil task")
 	}
 
+	if errType, canceled := ctxErrType(ctx); canceled {
+		return nil, l.fail(errType, "EXECUTION_LOOP_CANCELED", ctx.Err(), task, nil, -1,
+			fmt.Sprintf("execution loop canceled before starting task %q", task.ID))
+	}
+
 	analysis, err := l.analyzeContext(ctx, task)
 	if err != nil {
-		return l.response(analysis, nil), errors.Wrap(err, errors.TypeInternal, "EXECUTION_LOOP_ANALYSIS_FAILED", "core.agentexecutionloop",
-			fmt.Sprintf("analyzing context for task %q", task.ID)).With("taskId", task.ID)
+		return l.response(analysis, nil), l.fail(errors.TypeInternal, "EXECUTION_LOOP_ANALYSIS_FAILED", err, task, nil, -1,
+			fmt.Sprintf("analyzing context for task %q", task.ID))
 	}
 
 	plan, err := l.plan(ctx, task, analysis)
 	if err != nil {
-		return l.response(analysis, nil), errors.Wrap(err, errors.TypeInternal, "EXECUTION_LOOP_PLAN_FAILED", "core.agentexecutionloop",
-			fmt.Sprintf("creating plan for task %q", task.ID)).With("taskId", task.ID)
+		return l.response(analysis, nil), l.fail(errors.TypeInternal, "EXECUTION_LOOP_PLAN_FAILED", err, task, nil, -1,
+			fmt.Sprintf("creating plan for task %q", task.ID))
 	}
 
 	results := make([]StepResult, 0, len(plan.Steps))
 	for i, step := range plan.Steps {
+		if errType, canceled := ctxErrType(ctx); canceled {
+			return l.response(analysis, results), l.fail(errType, "EXECUTION_LOOP_CANCELED", ctx.Err(), task, &step, i,
+				fmt.Sprintf("execution loop canceled before step %q for task %q", step.Name, task.ID))
+		}
+
 		output, stepErr := l.executeStep(ctx, step)
 
 		evalErr := stepErr
@@ -174,22 +188,50 @@ func (l *ExecutionLoop) Run(ctx context.Context, task *types.Task) (map[string]a
 		results = append(results, result)
 
 		if evalErr != nil {
-			if l.log != nil {
-				l.log.Error("execution loop step failed", map[string]any{
-					"taskId":    task.ID,
-					"step":      step.Name,
-					"tool":      step.Tool,
-					"stepIndex": i,
-					"error":     evalErr.Error(),
-				})
-			}
-			return l.response(analysis, results), errors.Wrap(evalErr, errors.TypeInternal, "EXECUTION_LOOP_STEP_FAILED", "core.agentexecutionloop",
-				fmt.Sprintf("step %q failed for task %q", step.Name, task.ID)).
-				With("taskId", task.ID).With("step", step.Name).With("tool", step.Tool).With("stepIndex", i)
+			return l.response(analysis, results), l.fail(errors.TypeInternal, "EXECUTION_LOOP_STEP_FAILED", evalErr, task, &step, i,
+				fmt.Sprintf("step %q failed for task %q", step.Name, task.ID))
 		}
 	}
 
 	return l.response(analysis, results), nil
+}
+
+// ctxErrType reports whether ctx is done and, if so, the packages/errors
+// Type its cause maps to (TypeTimeout for a deadline, TypeCanceled
+// otherwise) - mirroring Worker.Stop's existing ctx.Err()-to-Type mapping
+// (task_worker.go, SPEC-0014).
+func ctxErrType(ctx context.Context) (errors.Type, bool) {
+	switch ctx.Err() {
+	case nil:
+		return "", false
+	case context.DeadlineExceeded:
+		return errors.TypeTimeout, true
+	default:
+		return errors.TypeCanceled, true
+	}
+}
+
+// fail wraps cause into a packages/errors error of errType tagged code,
+// with taskId (and, when step is non-nil, step/tool/stepIndex) attached as
+// context, and logs it if a Logger is configured. It is the single
+// failure-reporting path every Run failure branch shares, so no failure
+// mode - cancellation, analysis, planning, or a step - is silently dropped
+// from observability the way separate ad hoc per-branch log calls could
+// leave some branches uncovered.
+func (l *ExecutionLoop) fail(errType errors.Type, code string, cause error, task *types.Task, step *Step, stepIndex int, message string) error {
+	wrapped := errors.Wrap(cause, errType, code, "core.agentexecutionloop", message).With("taskId", task.ID)
+	fields := map[string]any{"taskId": task.ID, "error": cause.Error()}
+	if step != nil {
+		wrapped = wrapped.With("step", step.Name).With("tool", step.Tool).With("stepIndex", stepIndex)
+		fields["step"] = step.Name
+		fields["tool"] = step.Tool
+		fields["stepIndex"] = stepIndex
+	}
+
+	if l.log != nil {
+		l.log.Error("execution loop failed", fields)
+	}
+	return wrapped
 }
 
 // analyzeContext runs the Analyze Context stage, defaulting to an empty

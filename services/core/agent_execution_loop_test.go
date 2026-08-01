@@ -34,6 +34,50 @@ func TestExecutionLoop_Run_NilTask(t *testing.T) {
 	}
 }
 
+// TestExecutionLoop_Run_CanceledContextStopsBeforeNextStep verifies a
+// context canceled between Steps stops the loop before starting the next
+// one, rather than relying solely on the ToolCaller to notice - mirroring
+// Worker.loop's existing ctx.Done() check between iterations.
+func TestExecutionLoop_Run_CanceledContextStopsBeforeNextStep(t *testing.T) {
+	var secondStepRan bool
+
+	l, err := NewExecutionLoop(
+		func(ctx context.Context, task *types.Task, analysis map[string]any) (Plan, error) {
+			return Plan{Steps: []Step{
+				{Name: "first", Tool: "cancel_after_me"},
+				{Name: "second", Tool: "cancel_after_me"},
+			}}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewExecutionLoop returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// The first call cancels ctx; a second call (which must not happen) would
+	// set secondStepRan.
+	firstCallDone := false
+	l.call = func(ctx context.Context, tool string, input map[string]any) (map[string]any, error) {
+		if firstCallDone {
+			secondStepRan = true
+		}
+		firstCallDone = true
+		cancel()
+		return map[string]any{}, nil
+	}
+
+	_, err = l.Run(ctx, &types.Task{ID: "task-1"})
+	if !errors.HasCode(err, "EXECUTION_LOOP_CANCELED") {
+		t.Fatalf("Run error = %v, want code EXECUTION_LOOP_CANCELED", err)
+	}
+	if !errors.Is(err, errors.TypeCanceled) {
+		t.Errorf("Run error type = %v, want TypeCanceled", err)
+	}
+	if secondStepRan {
+		t.Error("second step ran after context was canceled")
+	}
+}
+
 // TestExecutionLoop_Run_CompletesSimpleTask exercises SPEC-0022's first
 // testing criterion: a task with a single-step plan and no tool calls
 // completes successfully, exercising Analyze Context, Create Plan, and
