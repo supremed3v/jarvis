@@ -39,12 +39,18 @@ func TestEvent_JSONRoundTrip(t *testing.T) {
 func TestTask_JSONRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	want := Task{
-		ID:        "task-1",
-		Type:      "research",
-		Status:    TaskStatusRunning,
-		Input:     map[string]any{"query": "jarvis"},
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          "task-1",
+		Title:       "Research JARVIS competitors",
+		Description: "Summarize similar local-first assistant projects",
+		Source:      TaskSourceAgent,
+		Priority:    TaskPriority("high"),
+		Type:        "research",
+		Status:      TaskStatusRunning,
+		Input:       map[string]any{"query": "jarvis"},
+		ParentID:    "task-0",
+		Metadata:    map[string]any{"origin": "planner"},
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	data, err := json.Marshal(want)
@@ -57,7 +63,13 @@ func TestTask_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("Unmarshal(Task) returned error: %v", err)
 	}
 
-	if got.ID != want.ID || got.Type != want.Type || got.Status != want.Status {
+	if got.ID != want.ID || got.Title != want.Title || got.Description != want.Description {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	if got.Source != want.Source || got.Priority != want.Priority || got.ParentID != want.ParentID {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	if got.Type != want.Type || got.Status != want.Status {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) {
@@ -65,6 +77,45 @@ func TestTask_JSONRoundTrip(t *testing.T) {
 	}
 	if got.Input["query"] != want.Input["query"] {
 		t.Errorf("Input[query] = %v, want %v", got.Input["query"], want.Input["query"])
+	}
+	if got.Metadata["origin"] != want.Metadata["origin"] {
+		t.Errorf("Metadata[origin] = %v, want %v", got.Metadata["origin"], want.Metadata["origin"])
+	}
+}
+
+func TestTask_SourceValues(t *testing.T) {
+	sources := []TaskSource{
+		TaskSourceVoice,
+		TaskSourceDesktop,
+		TaskSourceAgent,
+		TaskSourceScheduled,
+	}
+	seen := map[TaskSource]bool{}
+	for _, s := range sources {
+		if s == "" {
+			t.Errorf("TaskSource constant is empty")
+		}
+		if seen[s] {
+			t.Errorf("duplicate TaskSource value %q", s)
+		}
+		seen[s] = true
+	}
+}
+
+func TestTask_EmptyOptionalFieldsOmitted(t *testing.T) {
+	task := Task{ID: "task-1", Title: "Do a thing", Source: TaskSourceDesktop, Status: TaskStatusPending}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("Marshal(Task) returned error: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal into map returned error: %v", err)
+	}
+	for _, field := range []string{"description", "priority", "input", "result", "error", "parentId", "metadata"} {
+		if _, ok := raw[field]; ok {
+			t.Errorf("expected %s to be omitted when empty, got %v", field, raw[field])
+		}
 	}
 }
 
