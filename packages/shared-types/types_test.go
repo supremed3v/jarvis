@@ -231,6 +231,83 @@ func TestUnmarshal_MalformedJSONFailsWithoutPanic(t *testing.T) {
 	if err := json.Unmarshal(malformed, &tool); err == nil {
 		t.Errorf("Unmarshal(Tool) with malformed JSON returned no error")
 	}
+
+	var message Message
+	if err := json.Unmarshal(malformed, &message); err == nil {
+		t.Errorf("Unmarshal(Message) with malformed JSON returned no error")
+	}
+}
+
+func TestMessage_JSONRoundTrip(t *testing.T) {
+	want := Message{
+		ID:          "msg-1",
+		Timestamp:   time.Now().UTC().Truncate(time.Second),
+		Source:      "core-agent",
+		Destination: "developer-agent",
+		Type:        MessageTypeAgentCommunication,
+		Payload:     map[string]any{"task": "review-pr"},
+	}
+
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal(Message) returned error: %v", err)
+	}
+
+	var got Message
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal(Message) returned error: %v", err)
+	}
+
+	if got.ID != want.ID || got.Source != want.Source || got.Destination != want.Destination || got.Type != want.Type {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	if !got.Timestamp.Equal(want.Timestamp) {
+		t.Errorf("Timestamp = %v, want %v", got.Timestamp, want.Timestamp)
+	}
+	if got.Payload["task"] != want.Payload["task"] {
+		t.Errorf("Payload[task] = %v, want %v", got.Payload["task"], want.Payload["task"])
+	}
+}
+
+func TestMessage_TypeValues(t *testing.T) {
+	types := []MessageType{
+		MessageTypeAgentCommunication,
+		MessageTypeToolRequest,
+		MessageTypeEventNotification,
+	}
+	seen := map[MessageType]bool{}
+	for _, mt := range types {
+		if mt == "" {
+			t.Errorf("MessageType constant is empty")
+		}
+		if seen[mt] {
+			t.Errorf("duplicate MessageType value %q", mt)
+		}
+		seen[mt] = true
+	}
+}
+
+func TestMessage_EmptyDestinationAndPayloadOmitted(t *testing.T) {
+	m := Message{
+		ID:        "msg-1",
+		Timestamp: time.Now(),
+		Source:    "event-bus",
+		Type:      MessageTypeEventNotification,
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal(Message) returned error: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal into map returned error: %v", err)
+	}
+	if _, ok := raw["destination"]; ok {
+		t.Errorf("expected destination to be omitted when empty, got %v", raw["destination"])
+	}
+	if _, ok := raw["payload"]; ok {
+		t.Errorf("expected payload to be omitted when empty, got %v", raw["payload"])
+	}
 }
 
 // TestUnknownFieldsAreIgnored guards the wire-compatibility boundary between
