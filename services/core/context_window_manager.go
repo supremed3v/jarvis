@@ -2,10 +2,11 @@
 // Manager. Where ContextBuilder (agent_context_builder.go, SPEC-0023)
 // assembles a Context and only offers a word-count SizeEstimator plus
 // "cut later sections first" truncation as a placeholder, WindowManager is
-// the real token-accounting and prioritization layer that package doc
-// comment explicitly deferred to this spec: Fit takes an already-built
-// Context and a token budget, and returns the highest-Priority subset of it
-// that fits, plus a Usage report of what that cost.
+// the real token-accounting and prioritization layer agent_context_builder.go's
+// own package doc comment explicitly deferred to this spec: Fit takes an
+// already-built Context and a token budget, and returns the
+// highest-ContextPriority subset of it that fits, plus a Usage report of
+// what that cost.
 //
 // WindowManager deliberately does not decide what the token budget itself
 // should be for a given model or agent - packages/config's Model.MaxTokens
@@ -163,10 +164,12 @@ type scoredItem struct {
 // matching ContextBuilder.WithMaxSize's convention - Fit returns c unchanged
 // in that case. The returned Context reuses SPEC-0023's own shape (Items in
 // their original order, TotalSize now in token units, Truncated listing
-// every section that lost at least one item) so existing callers such as
-// VariablesFromContext (SPEC-0031) keep working unmodified against Fit's
-// output. Fit never errors: a Context with fewer items than requested is
-// still a valid result, exactly as ContextBuilder.Build documents.
+// every section that lost at least one item - including, via c.Truncated,
+// any section an upstream ContextBuilder already dropped entirely before c
+// ever reached Fit) so existing callers such as VariablesFromContext
+// (SPEC-0031) keep working unmodified against Fit's output. Fit never
+// errors: a Context with fewer items than requested is still a valid
+// result, exactly as ContextBuilder.Build documents.
 func (w *WindowManager) Fit(c Context, budget int) (Context, Usage) {
 	estimate := w.estimate
 	if estimate == nil {
@@ -219,6 +222,9 @@ func (w *WindowManager) Fit(c Context, budget int) (Context, Usage) {
 	var items []ContextItem
 	bySectionKept := make(map[ContextSection]int)
 	droppedSections := make(map[ContextSection]bool)
+	for _, section := range c.Truncated {
+		droppedSections[section] = true
+	}
 	for i, s := range scored {
 		if keep[i] {
 			items = append(items, s.item)

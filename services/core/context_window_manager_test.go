@@ -104,6 +104,33 @@ func TestWindowManager_Fit_ImportantInformationRemains(t *testing.T) {
 	}
 }
 
+// TestWindowManager_Fit_PreservesUpstreamTruncation verifies that a section
+// an upstream ContextBuilder already dropped entirely (so it has no items
+// left in c.Items to be scored or dropped by Fit itself) still shows up in
+// the result's Truncated list - Fit must merge with c.Truncated, not
+// overwrite it, once it also needs to trim further.
+func TestWindowManager_Fit_PreservesUpstreamTruncation(t *testing.T) {
+	c := Context{
+		Items: []ContextItem{
+			{Section: ContextSectionUserMessage, Content: "hello world this is definitely more than one token"},
+		},
+		Truncated: []ContextSection{ContextSectionPreviousResults},
+	}
+
+	// budget forces Fit's trimming branch to run (even the sole item doesn't fit).
+	got, _ := NewWindowManager().Fit(c, 1)
+
+	found := false
+	for _, s := range got.Truncated {
+		if s == ContextSectionPreviousResults {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Truncated = %v, want it to still include upstream-truncated %q", got.Truncated, ContextSectionPreviousResults)
+	}
+}
+
 // TestWindowManager_Fit_LargeConversationsKeepMostRecentTurns verifies
 // "Large conversations are handled": when ConversationHistory must be
 // trimmed, the most recently added turns (later in Context.Items) are kept
