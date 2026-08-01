@@ -115,9 +115,12 @@ func joinSections(c Context, sections ...ContextSection) string {
 
 // Render fills t's Body against vars, producing the final prompt string
 // (the SPEC-0031 "Prompts render correctly" / "Variables inject correctly"
-// testing criteria). Body is parsed as a text/template with
-// "missingkey=error", so a Body referencing a PromptVariables field that
-// doesn't exist fails Render rather than silently rendering "<no value>".
+// testing criteria). Referencing an undefined PromptVariables field (e.g.
+// "{{.Typo}}") always fails regardless of template options - that's
+// text/template's own behavior for struct fields. Body is parsed with the
+// "missingkey=error" option specifically for Extra, a map: without it, a
+// Body referencing an Extra key the caller didn't supply would silently
+// render "<no value>" instead of failing.
 // Render returns a packages/errors TypeInvalidInput error, naming t, if
 // Body fails to parse or execute.
 func (t PromptTemplate) Render(vars PromptVariables) (string, error) {

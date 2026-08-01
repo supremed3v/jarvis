@@ -72,6 +72,22 @@ func TestPromptTemplate_Render_UnknownFieldFails(t *testing.T) {
 	}
 }
 
+// TestPromptTemplate_Render_UnknownExtraKeyFails verifies the
+// "missingkey=error" option's actual purpose: a Body referencing an Extra
+// map key the caller didn't supply fails Render, rather than the
+// default text/template behavior of silently rendering "<no value>".
+func TestPromptTemplate_Render_UnknownExtraKeyFails(t *testing.T) {
+	tmpl := PromptTemplate{Name: "extra-typo", Version: 1, Body: "{{.Extra.missingKey}}"}
+
+	_, err := tmpl.Render(PromptVariables{Extra: map[string]string{"otherKey": "value"}})
+	if err == nil {
+		t.Fatal("Render() error = nil, want error for unknown Extra key")
+	}
+	if !errors.Is(err, errors.TypeInvalidInput) {
+		t.Errorf("Render() error type = %v, want TypeInvalidInput", err)
+	}
+}
+
 // TestPromptTemplate_Render_MalformedBodyFailsToParse verifies a Body with
 // invalid template syntax fails Render with a TypeInvalidInput error rather
 // than panicking.
