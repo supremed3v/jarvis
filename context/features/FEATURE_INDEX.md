@@ -222,7 +222,7 @@ SPEC-0013-task-queue.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
