@@ -122,6 +122,48 @@ func TestWorker_EmitsStartedAndCompletedEvents(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return startedCount() == 1 && completedCount() == 1 })
 }
 
+func TestWorker_EmitsCompletedEventWithResultPayload(t *testing.T) {
+	q := NewQueue()
+	sm := NewStateMachine()
+	bus := NewBus()
+	task := newWorkerTestTask("task-1")
+	if err := q.Add(task); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	var received types.Event
+	var mu sync.Mutex
+	unsub := bus.Subscribe(EventTaskCompleted, func(event types.Event) {
+		mu.Lock()
+		received = event
+		mu.Unlock()
+	})
+	defer unsub()
+
+	executor := func(ctx context.Context, task *types.Task) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	w := NewWorker("worker-1", q, sm, bus, executor, WithPollInterval(time.Millisecond))
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer w.Stop(context.Background())
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return received.Type == EventTaskCompleted
+	})
+
+	mu.Lock()
+	result, ok := received.Payload["result"].(map[string]any)
+	mu.Unlock()
+	if !ok || result["ok"] != true {
+		t.Errorf("EventTaskCompleted Payload[result] = %v, want map with ok=true", result)
+	}
+}
+
 func TestWorker_EmitsFailedEventOnExecutorError(t *testing.T) {
 	q := NewQueue()
 	sm := NewStateMachine()
