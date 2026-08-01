@@ -375,7 +375,7 @@ SPEC-0022-agent-execution-loop.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
