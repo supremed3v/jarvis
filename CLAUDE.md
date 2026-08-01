@@ -4,9 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-JARVIS is a local-first personal AI operating system, currently in the **specification and architecture phase**. There is no source code yet: `apps/`, `agents/`, `packages/`, `services/`, and `tests/` exist only as empty scaffold directories (`apps/desktop`, `agents/core-agent`, `agents/developer-agent`, `agents/research-agent`, `packages/config`, `packages/logger`, `packages/shared-types`, `services/core`, `services/memory`, `services/tools`, `services/voice`). No `go.mod`, `package.json`, build config, linter, or test runner exists anywhere in the repo yet.
+JARVIS is a local-first personal AI operating system, under active implementation following its spec library. Phases 1-3 (Foundation, Runtime, Task Execution: SPEC-0001 through SPEC-0017) are complete, and Phase 4 Intelligence's Agent layer is underway: SPEC-0018 through SPEC-0021 (Agent Interface, Agent Manifest System, Agent Registry, Agent Lifecycle Manager) are implemented. 21 of 182 specs are `Completed` per `docs/agents/JARVIS_BUILD_TRACKER.md`, which is the authoritative source for what's actually built — check it (or `context/features/FEATURE_INDEX.md`, generated from it) before assuming a spec is unimplemented.
 
-Consequently there are **no build/lint/test commands to run** — the next unit of work per `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` is Phase 1 (SPEC-0001 Repository Foundation through SPEC-0006 Error Handling), which is what will actually create the toolchain. Do not invent build tooling that isn't specified; implement exactly what the relevant SPEC describes.
+The Go workspace (`go.work`, Go 1.23) currently has five real modules with code, tests, and (for `services/core`) one third-party dependency (`gopkg.in/yaml.v3`, since SPEC-0019):
+- `packages/config`, `packages/errors`, `packages/logger`, `packages/shared-types` (Foundation layer)
+- `services/core` (Runtime, Task Execution, and Agent layers so far — e.g. `runtime.go`, `eventbus.go`, `task_*.go`, `agent*.go`)
+
+`agents/core-agent`, `agents/developer-agent`, `agents/research-agent`, `apps/desktop`, `services/memory`, `services/tools`, and `services/voice` are still empty scaffold directories (`.gitkeep` only) — no spec has required a concrete implementation in any of them yet.
+
+Build/vet/test commands now exist: use `scripts/go_all.ps1` (see below) rather than `go build ./...` from the repo root, which fails for workspace-structural reasons unrelated to whether code exists. The next unit of work per `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` is SPEC-0022 (Agent Execution Loop), continuing Phase 4's Agent layer. Do not invent build tooling that isn't specified; implement exactly what the relevant SPEC describes.
 
 The PowerShell utilities in `scripts/` (run from inside `scripts/`, since each uses relative `../` paths):
 - `scripts/generate_feature_index.ps1` — regenerates `context/features/FEATURE_INDEX.md` from all `SPEC-*.md` files, deriving each spec's Status from `docs/agents/JARVIS_BUILD_TRACKER.md`.
@@ -21,7 +27,7 @@ The PowerShell utilities in `scripts/` (run from inside `scripts/`, since each u
 4. Read the required `context/features/SPEC-NNNN-*.md` file(s) and their listed dependencies.
 5. Check `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` and `docs/execution/JARVIS_DEPENDENCY_GRAPH.md` to confirm prerequisite specs are already implemented before starting a later one.
 
-Every `SPEC-NNNN` file currently has status "Planned" in the feature index — none have been implemented. When implementing one, use `docs/agents/SPEC_EXECUTION_TEMPLATE.md` as the shape for planning the work (objective, dependencies, files to create/modify, implementation plan, testing plan).
+Each `SPEC-NNNN` file's actual status (`Planned`/`In Progress`/`Blocked`/`Completed`/`Verified`) is tracked in `docs/agents/JARVIS_BUILD_TRACKER.md` and mirrored into the feature index — check it rather than assuming a spec is unimplemented. When implementing a spec, use `docs/agents/SPEC_EXECUTION_TEMPLATE.md` as the shape for planning the work (objective, dependencies, files to create/modify, implementation plan, testing plan).
 
 ## Architecture (target design)
 
