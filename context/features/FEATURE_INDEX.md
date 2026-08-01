@@ -477,7 +477,7 @@ SPEC-0028-model-configuration-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
