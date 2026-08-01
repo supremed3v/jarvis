@@ -273,7 +273,7 @@ SPEC-0016-background-scheduler.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
