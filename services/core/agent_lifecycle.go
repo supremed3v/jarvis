@@ -116,7 +116,10 @@ func (m *LifecycleManager) Initialize(ctx context.Context, agentID string) error
 		if err := initializer.Init(ctx); err != nil {
 			wrapped := errors.Wrap(err, errors.TypeInternal, "AGENT_INIT_FAILED", "core.agentlifecycle",
 				fmt.Sprintf("agent %q failed to initialize", agentID)).With("agentId", agentID)
-			m.transition(agentID, types.AgentStatusFailed, wrapped.Error())
+			// Best-effort: the FAILED transition can itself only be rejected if
+			// agentID's state already changed concurrently, in which case the
+			// Init failure above is still the error that matters to the caller.
+			_, _ = m.transition(agentID, types.AgentStatusFailed, wrapped.Error())
 			return wrapped
 		}
 	}
@@ -148,7 +151,10 @@ func (m *LifecycleManager) Stop(ctx context.Context, agentID string) error {
 		if err := cleaner.Cleanup(ctx); err != nil {
 			wrapped := errors.Wrap(err, errors.TypeInternal, "AGENT_CLEANUP_FAILED", "core.agentlifecycle",
 				fmt.Sprintf("agent %q failed to clean up", agentID)).With("agentId", agentID)
-			m.transition(agentID, types.AgentStatusFailed, wrapped.Error())
+			// Best-effort: the FAILED transition can itself only be rejected if
+			// agentID's state already changed concurrently, in which case the
+			// Cleanup failure above is still the error that matters to the caller.
+			_, _ = m.transition(agentID, types.AgentStatusFailed, wrapped.Error())
 			return wrapped
 		}
 	}
