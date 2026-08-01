@@ -137,7 +137,7 @@ SPEC-0008-dependency-container.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
