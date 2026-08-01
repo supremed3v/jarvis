@@ -409,7 +409,7 @@ SPEC-0024-agent-permission-model.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
