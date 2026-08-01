@@ -103,7 +103,7 @@ SPEC-0006-error-handling-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
