@@ -494,7 +494,7 @@ SPEC-0029-model-router.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
