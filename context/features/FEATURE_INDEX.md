@@ -120,7 +120,7 @@ SPEC-0007-go-runtime-bootstrap.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
