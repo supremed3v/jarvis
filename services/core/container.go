@@ -17,11 +17,11 @@ type TaskManager interface{}
 type ToolRegistry interface{}
 
 // Container holds the shared services a Core Runtime component may depend
-// on. Config, Logger, EventBus, AgentRegistry, Provider, and Router are
-// wired to their real SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020,
-// SPEC-0026/0027, and SPEC-0029 implementations; the remaining slots are
-// typed placeholders until their owning specs are implemented. Every slot
-// stays nil unless supplied via options.
+// on. Config, Logger, EventBus, AgentRegistry, Provider, Router, and
+// StreamHandler are wired to their real SPEC-0003, SPEC-0005, SPEC-0009,
+// SPEC-0020, SPEC-0026/0027, SPEC-0029, and SPEC-0030 implementations; the
+// remaining slots are typed placeholders until their owning specs are
+// implemented. Every slot stays nil unless supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
@@ -32,6 +32,7 @@ type Container struct {
 	AgentRegistry AgentRegistry
 	Provider      Provider
 	Router        *ModelRouter
+	StreamHandler *StreamHandler
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -65,6 +66,11 @@ func WithProvider(p Provider) ContainerOption {
 // WithRouter sets the Container's Model Router slot.
 func WithRouter(r *ModelRouter) ContainerOption {
 	return func(c *Container) { c.Router = r }
+}
+
+// WithStreamHandler sets the Container's Streaming Response Handler slot.
+func WithStreamHandler(h *StreamHandler) ContainerOption {
+	return func(c *Container) { c.StreamHandler = h }
 }
 
 // NewContainer creates a Container wired to the given Config and Logger.
