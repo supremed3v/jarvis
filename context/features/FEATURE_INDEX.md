@@ -86,7 +86,7 @@ SPEC-0005-logging-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
