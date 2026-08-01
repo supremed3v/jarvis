@@ -171,7 +171,7 @@ SPEC-0010-internal-message-protocol.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
