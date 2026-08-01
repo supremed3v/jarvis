@@ -46,6 +46,7 @@ type Worker struct {
 	bus      EventBus
 	executor Executor
 	log      *logger.Logger
+	retry    *RetryManager
 
 	pollInterval time.Duration
 
@@ -53,6 +54,7 @@ type Worker struct {
 	running bool
 	cancel  context.CancelFunc
 	done    chan struct{}
+	retryWG sync.WaitGroup
 }
 
 // WorkerOption configures a Worker created by NewWorker.
@@ -68,6 +70,16 @@ func WithPollInterval(d time.Duration) WorkerOption {
 // and failures. Optional; a Worker with no logger runs silently.
 func WithWorkerLogger(log *logger.Logger) WorkerOption {
 	return func(w *Worker) { w.log = log }
+}
+
+// WithRetryManager attaches a RetryManager (SPEC-0015) so a Task whose
+// Executor fails is retried - moved to Waiting and re-queued after the
+// RetryManager's delay - until its RetryPolicy's MaxAttempts is reached,
+// at which point it is failed terminally. A Worker with no RetryManager
+// fails a Task on its first Executor error, matching pre-SPEC-0015
+// behavior.
+func WithRetryManager(rm *RetryManager) WorkerOption {
+	return func(w *Worker) { w.retry = rm }
 }
 
 // NewWorker creates a ready-to-use Worker identified by id, consuming from
@@ -131,8 +143,15 @@ func (w *Worker) Stop(ctx context.Context) error {
 
 	cancel()
 
+	allDone := make(chan struct{})
+	go func() {
+		<-done
+		w.retryWG.Wait()
+		close(allDone)
+	}()
+
 	select {
-	case <-done:
+	case <-allDone:
 		if w.log != nil {
 			w.log.Info("worker stopped", map[string]any{"workerId": w.id})
 		}
@@ -189,16 +208,75 @@ func (w *Worker) processTask(ctx context.Context, task *types.Task) {
 
 	result, err := w.executor(ctx, task)
 	if err != nil {
-		w.fail(task, err)
+		w.handleFailure(ctx, task, err)
 		return
 	}
 
 	task.Result = result
+	if w.retry != nil {
+		w.retry.Reset(task.ID)
+	}
 	if _, terr := w.sm.Transition(task, types.TaskStatusCompleted); terr != nil {
 		w.fail(task, terr)
 		return
 	}
 	w.publish(EventTaskCompleted, task, nil)
+}
+
+// handleFailure processes an Executor failure for task (SPEC-0015). If no
+// RetryManager is configured, or the RetryManager reports the retry budget
+// is exhausted, task is failed terminally via fail. Otherwise task is moved
+// to Waiting and re-queued after the RetryManager's delay for another
+// attempt, and EventTaskRetryScheduled is published instead of
+// EventTaskFailed.
+func (w *Worker) handleFailure(ctx context.Context, task *types.Task, taskErr error) {
+	if w.retry == nil {
+		w.fail(task, taskErr)
+		return
+	}
+
+	attempt, shouldRetry := w.retry.RecordFailure(task.ID, taskErr.Error())
+	if !shouldRetry {
+		w.fail(task, taskErr)
+		return
+	}
+
+	if _, err := w.sm.Transition(task, types.TaskStatusWaiting); err != nil {
+		// Task can't move to Waiting (e.g. it was cancelled concurrently) -
+		// fail it terminally rather than dropping it silently.
+		w.fail(task, taskErr)
+		return
+	}
+	task.Error = taskErr.Error()
+
+	w.publish(EventTaskRetryScheduled, task, map[string]any{"error": taskErr.Error(), "attempt": attempt})
+	w.scheduleRetry(ctx, task)
+}
+
+// scheduleRetry re-queues task after the RetryManager's delay, on its own
+// goroutine so the Worker's main loop stays free to process other Tasks in
+// the meantime. If ctx is done before the delay elapses (the Worker is
+// being stopped), the retry is abandoned and task is left in Waiting.
+// scheduleRetry is tracked by w.retryWG so Stop waits for it to finish.
+func (w *Worker) scheduleRetry(ctx context.Context, task *types.Task) {
+	w.retryWG.Add(1)
+	go func() {
+		defer w.retryWG.Done()
+
+		select {
+		case <-time.After(w.retry.Delay()):
+		case <-ctx.Done():
+			return
+		}
+
+		if err := w.queue.Add(task); err != nil && w.log != nil {
+			w.log.Error("worker could not re-queue task for retry", map[string]any{
+				"workerId": w.id,
+				"taskId":   task.ID,
+				"error":    err.Error(),
+			})
+		}
+	}()
 }
 
 // fail records err on task, transitions it to Failed, and publishes
