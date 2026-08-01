@@ -528,7 +528,7 @@ SPEC-0031-prompt-template-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

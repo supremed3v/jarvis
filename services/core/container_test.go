@@ -45,6 +45,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.StreamHandler != nil {
 		t.Fatal("StreamHandler should be nil until wired via WithStreamHandler")
 	}
+	if c.PromptRegistry != nil {
+		t.Fatal("PromptRegistry should be nil until wired via WithPromptRegistry")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -55,6 +58,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	provider := NewOllamaProvider()
 	router := NewModelRouter(cfgpkg.ModelConfig{}, provider, logger.New("test"), nil)
 	streamHandler := NewStreamHandler(provider, logger.New("test"))
+	promptRegistry := NewPromptRegistry()
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
@@ -64,6 +68,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 		WithProvider(provider),
 		WithRouter(router),
 		WithStreamHandler(streamHandler),
+		WithPromptRegistry(promptRegistry),
 	)
 
 	if c.EventBus != eventBus {
@@ -86,6 +91,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.StreamHandler != streamHandler {
 		t.Fatal("WithStreamHandler did not wire the given value")
+	}
+	if c.PromptRegistry != promptRegistry {
+		t.Fatal("WithPromptRegistry did not wire the given value")
 	}
 }
 
