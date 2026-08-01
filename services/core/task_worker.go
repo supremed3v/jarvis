@@ -220,7 +220,7 @@ func (w *Worker) processTask(ctx context.Context, task *types.Task) {
 		w.fail(task, terr)
 		return
 	}
-	w.publish(EventTaskCompleted, task, nil)
+	w.publish(EventTaskCompleted, task, map[string]any{"result": task.Result})
 }
 
 // handleFailure processes an Executor failure for task (SPEC-0015). If no

@@ -290,7 +290,7 @@ SPEC-0017-task-history-storage.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
