@@ -1,41 +1,25 @@
-# Current Feature: Shared Types Package
+# Current Feature
 
 ## Working In
 
-packages/shared-types (standalone Go module, per the SPEC-0003 precedent — likely `jarvis-pa/packages/shared-types`, go 1.23, stdlib-only)
+Not Started
 
 ## Status
 
-In Progress
+Not Started
 
 ## Goals
 
-- Define shared contracts: Events, Tasks, Agents, Tools
-- No business logic in this package
-- Framework independent
-- Support serialization
+-
 
 ## Dependencies
 
-- SPEC-0001 Repository Foundation (status: Completed)
-- SPEC-0002 Development Environment (status: Completed)
-- SPEC-0003 Configuration System (status: Completed)
+-
 
 ## Notes
 
-Specification:
-
-context/features/SPEC-0004-shared-types-package.md
-
-Dependency resolution source: Implementation Order (Phase 1 Foundation lists 0001-0006 in order; 0004 follows 0001-0003 which are already Completed) + spec's own Requirements text (no config/logging dependency implied — this is a pure types package).
-
-Precedent: packages/config (SPEC-0003) established the pattern for Foundation-layer packages — standalone go.mod (module `jarvis-pa/packages/<name>`, go 1.23), independent of the future SPEC-0007 root runtime module, stdlib-only where possible, no go.sum. Follow the same shape for packages/shared-types.
-
-Relevant ADR: ADR-0001 (Go runtime choice) — package will be Go. No other ADR directly governs a types-only package.
+-
 
 ## History
 
-- 2026-08-01 load loaded SPEC-0004
-- 2026-08-01 start began implementation on feature/shared-types-package
-- 2026-08-01 test added error-handling/edge-case/boundary tests (malformed JSON, zero values, omitempty, unknown-field forward-compat, enum wire format); go build/vet/test all pass (12/12)
-- 2026-08-01 review verdict: Ready to complete. No scope, architecture, or security issues found; see review output for detail.
+- 2026-08-01 SPEC-0004 Shared Types Package — Completed. Implemented packages/shared-types (standalone Go module, module jarvis-pa/packages/shared-types, go 1.23, stdlib-only, no go.sum), following the packages/config (SPEC-0003) precedent for Foundation-layer packages. Defines four framework-independent, serializable data contracts with no business logic: Event (id/type/source/timestamp/payload), Task (id/type/status via TaskStatus enum/input/result/error/timestamps), Agent (id/name/type/status via AgentStatus enum/capabilities), Tool (name/description/parameters/permissions). EventType intentionally has no hardcoded constants, since concrete event names are producer-specific and belong to future services (SPEC-0009 Event Bus onward), not to this shared contract. 12 tests cover JSON round-trips for all four types, omitempty/zero-value edge cases, malformed-JSON error handling (fails safely, never panics), and cross-service wire-compatibility (unknown fields ignored for forward-compat, enums encode as plain JSON strings for non-Go consumers). `go build ./...`, `go vet ./...`, `go test ./... -v`, `gofmt -l .` all clean (12/12 tests pass); coverage reports "no statements" as expected for a types-only package. Built on feature/shared-types-package, merged into master via commit 3c99277 (merge commit follows). Full rationale: see docs/agents/JARVIS_BUILD_TRACKER.md (SPEC-0004 row).

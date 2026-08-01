@@ -69,7 +69,7 @@ SPEC-0004-shared-types-package.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
