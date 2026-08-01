@@ -511,7 +511,7 @@ SPEC-0030-streaming-response-handler.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
