@@ -392,7 +392,7 @@ SPEC-0023-agent-context-builder.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
