@@ -34,7 +34,7 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 		t.Fatal("ToolRegistry should be nil until SPEC-0045 is implemented and wired")
 	}
 	if c.AgentRegistry != nil {
-		t.Fatal("AgentRegistry should be nil until SPEC-0020 is implemented and wired")
+		t.Fatal("AgentRegistry should be nil until wired via WithAgentRegistry")
 	}
 }
 
@@ -42,7 +42,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	eventBus := NewBus()
 	taskManager := struct{ name string }{name: "fake-task-manager"}
 	toolRegistry := struct{ name string }{name: "fake-tool-registry"}
-	agentRegistry := struct{ name string }{name: "fake-agent-registry"}
+	agentRegistry := NewRegistry()
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
