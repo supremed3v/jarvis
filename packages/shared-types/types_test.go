@@ -147,7 +147,7 @@ func TestAgent_JSONRoundTrip(t *testing.T) {
 		ID:           "agent-1",
 		Name:         "core-agent",
 		Type:         "core",
-		Status:       AgentStatusIdle,
+		Status:       AgentStatusRegistered,
 		Capabilities: []string{"chat", "planning"},
 	}
 
@@ -214,7 +214,7 @@ func TestEvent_EmptyPayloadOmitted(t *testing.T) {
 }
 
 func TestAgent_EmptyCapabilitiesOmitted(t *testing.T) {
-	a := Agent{ID: "agent-1", Name: "core-agent", Type: "core", Status: AgentStatusIdle}
+	a := Agent{ID: "agent-1", Name: "core-agent", Type: "core", Status: AgentStatusRegistered}
 	data, err := json.Marshal(a)
 	if err != nil {
 		t.Fatalf("Marshal(Agent) returned error: %v", err)

@@ -358,7 +358,7 @@ SPEC-0021-agent-lifecycle-manager.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
