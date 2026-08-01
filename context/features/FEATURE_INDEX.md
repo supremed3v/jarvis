@@ -256,7 +256,7 @@ SPEC-0015-task-retry-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
