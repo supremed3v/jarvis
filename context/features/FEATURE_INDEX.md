@@ -307,7 +307,7 @@ SPEC-0018-agent-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
