@@ -17,22 +17,24 @@ type TaskManager interface{}
 type ToolRegistry interface{}
 
 // Container holds the shared services a Core Runtime component may depend
-// on. Config, Logger, EventBus, AgentRegistry, Provider, Router, and
-// StreamHandler are wired to their real SPEC-0003, SPEC-0005, SPEC-0009,
-// SPEC-0020, SPEC-0026/0027, SPEC-0029, and SPEC-0030 implementations; the
-// remaining slots are typed placeholders until their owning specs are
-// implemented. Every slot stays nil unless supplied via options.
+// on. Config, Logger, EventBus, AgentRegistry, Provider, Router,
+// StreamHandler, and PromptRegistry are wired to their real SPEC-0003,
+// SPEC-0005, SPEC-0009, SPEC-0020, SPEC-0026/0027, SPEC-0029, SPEC-0030, and
+// SPEC-0031 implementations; the remaining slots are typed placeholders
+// until their owning specs are implemented. Every slot stays nil unless
+// supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
 
-	EventBus      EventBus
-	TaskManager   TaskManager
-	ToolRegistry  ToolRegistry
-	AgentRegistry AgentRegistry
-	Provider      Provider
-	Router        *ModelRouter
-	StreamHandler *StreamHandler
+	EventBus       EventBus
+	TaskManager    TaskManager
+	ToolRegistry   ToolRegistry
+	AgentRegistry  AgentRegistry
+	Provider       Provider
+	Router         *ModelRouter
+	StreamHandler  *StreamHandler
+	PromptRegistry *PromptRegistry
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -71,6 +73,11 @@ func WithRouter(r *ModelRouter) ContainerOption {
 // WithStreamHandler sets the Container's Streaming Response Handler slot.
 func WithStreamHandler(h *StreamHandler) ContainerOption {
 	return func(c *Container) { c.StreamHandler = h }
+}
+
+// WithPromptRegistry sets the Container's Prompt Registry slot.
+func WithPromptRegistry(r *PromptRegistry) ContainerOption {
+	return func(c *Container) { c.PromptRegistry = r }
 }
 
 // NewContainer creates a Container wired to the given Config and Logger.
