@@ -426,7 +426,7 @@ SPEC-0025-agent-communication-protocol.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
