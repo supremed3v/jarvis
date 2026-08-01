@@ -154,7 +154,7 @@ SPEC-0009-event-bus.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -39,7 +39,7 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
-	eventBus := struct{ name string }{name: "fake-event-bus"}
+	eventBus := NewBus()
 	taskManager := struct{ name string }{name: "fake-task-manager"}
 	toolRegistry := struct{ name string }{name: "fake-tool-registry"}
 	agentRegistry := struct{ name string }{name: "fake-agent-registry"}
