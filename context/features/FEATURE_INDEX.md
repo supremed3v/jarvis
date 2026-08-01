@@ -460,7 +460,7 @@ SPEC-0027-ollama-integration.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

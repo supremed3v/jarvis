@@ -36,6 +36,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.AgentRegistry != nil {
 		t.Fatal("AgentRegistry should be nil until wired via WithAgentRegistry")
 	}
+	if c.Provider != nil {
+		t.Fatal("Provider should be nil until wired via WithProvider")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -43,12 +46,14 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	taskManager := struct{ name string }{name: "fake-task-manager"}
 	toolRegistry := struct{ name string }{name: "fake-tool-registry"}
 	agentRegistry := NewRegistry()
+	provider := NewOllamaProvider()
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
 		WithTaskManager(taskManager),
 		WithToolRegistry(toolRegistry),
 		WithAgentRegistry(agentRegistry),
+		WithProvider(provider),
 	)
 
 	if c.EventBus != eventBus {
@@ -62,6 +67,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.AgentRegistry != agentRegistry {
 		t.Fatal("WithAgentRegistry did not wire the given value")
+	}
+	if c.Provider != provider {
+		t.Fatal("WithProvider did not wire the given value")
 	}
 }
 
