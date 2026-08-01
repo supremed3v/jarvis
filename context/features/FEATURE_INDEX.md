@@ -545,7 +545,7 @@ SPEC-0032-context-window-manager.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
