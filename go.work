@@ -1,0 +1,9 @@
+go 1.23
+
+use (
+	./packages/config
+	./packages/errors
+	./packages/logger
+	./packages/shared-types
+	./services/core
+)
