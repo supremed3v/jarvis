@@ -188,7 +188,7 @@ SPEC-0011-task-model.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
