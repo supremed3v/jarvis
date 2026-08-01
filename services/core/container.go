@@ -16,15 +16,11 @@ type TaskManager interface{}
 // Not yet implemented.
 type ToolRegistry interface{}
 
-// AgentRegistry is a placeholder slot for the SPEC-0020 Agent Registry.
-// Not yet implemented.
-type AgentRegistry interface{}
-
 // Container holds the shared services a Core Runtime component may depend
-// on. Config, Logger, and EventBus are wired to their real SPEC-0003,
-// SPEC-0005, and SPEC-0009 implementations; the remaining slots are typed
-// placeholders until their owning specs are implemented. Every slot stays
-// nil unless supplied via options.
+// on. Config, Logger, EventBus, and AgentRegistry are wired to their real
+// SPEC-0003, SPEC-0005, SPEC-0009, and SPEC-0020 implementations; the
+// remaining slots are typed placeholders until their owning specs are
+// implemented. Every slot stays nil unless supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger

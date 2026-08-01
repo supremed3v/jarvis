@@ -341,7 +341,7 @@ SPEC-0020-agent-registry.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
