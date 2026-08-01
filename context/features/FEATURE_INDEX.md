@@ -205,7 +205,7 @@ SPEC-0012-task-state-machine.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -3,14 +3,19 @@ package types
 import "time"
 
 // TaskStatus is the lifecycle state of a Task (SPEC-0012 Task State
-// Machine).
+// Machine). Valid transitions between these states are enforced by
+// services/core's StateMachine, not by this package (SPEC-0004: shapes
+// only, no behavior).
 type TaskStatus string
 
 const (
-	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusRunning   TaskStatus = "running"
-	TaskStatusCompleted TaskStatus = "completed"
+	TaskStatusCreated   TaskStatus = "created"
+	TaskStatusPlanning  TaskStatus = "planning"
+	TaskStatusQueued    TaskStatus = "queued"
+	TaskStatusExecuting TaskStatus = "executing"
+	TaskStatusWaiting   TaskStatus = "waiting"
 	TaskStatusFailed    TaskStatus = "failed"
+	TaskStatusCompleted TaskStatus = "completed"
 	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
@@ -46,4 +51,14 @@ type Task struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	UpdatedAt   time.Time      `json:"updatedAt"`
+}
+
+// TaskTransition is a single recorded state change in a Task's lifecycle
+// (SPEC-0012 Task State Machine). Produced by services/core's StateMachine;
+// this package only defines its shape.
+type TaskTransition struct {
+	TaskID    string     `json:"taskId"`
+	From      TaskStatus `json:"from"`
+	To        TaskStatus `json:"to"`
+	Timestamp time.Time  `json:"timestamp"`
 }

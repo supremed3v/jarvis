@@ -45,7 +45,7 @@ func TestTask_JSONRoundTrip(t *testing.T) {
 		Source:      TaskSourceAgent,
 		Priority:    TaskPriority("high"),
 		Type:        "research",
-		Status:      TaskStatusRunning,
+		Status:      TaskStatusExecuting,
 		Input:       map[string]any{"query": "jarvis"},
 		ParentID:    "task-0",
 		Metadata:    map[string]any{"origin": "planner"},
@@ -103,7 +103,7 @@ func TestTask_SourceValues(t *testing.T) {
 }
 
 func TestTask_EmptyOptionalFieldsOmitted(t *testing.T) {
-	task := Task{ID: "task-1", Title: "Do a thing", Source: TaskSourceDesktop, Status: TaskStatusPending}
+	task := Task{ID: "task-1", Title: "Do a thing", Source: TaskSourceDesktop, Status: TaskStatusCreated}
 	data, err := json.Marshal(task)
 	if err != nil {
 		t.Fatalf("Marshal(Task) returned error: %v", err)
@@ -121,10 +121,13 @@ func TestTask_EmptyOptionalFieldsOmitted(t *testing.T) {
 
 func TestTask_StatusValues(t *testing.T) {
 	statuses := []TaskStatus{
-		TaskStatusPending,
-		TaskStatusRunning,
-		TaskStatusCompleted,
+		TaskStatusCreated,
+		TaskStatusPlanning,
+		TaskStatusQueued,
+		TaskStatusExecuting,
+		TaskStatusWaiting,
 		TaskStatusFailed,
+		TaskStatusCompleted,
 		TaskStatusCancelled,
 	}
 	seen := map[TaskStatus]bool{}
@@ -365,14 +368,40 @@ func TestMessage_EmptyDestinationAndPayloadOmitted(t *testing.T) {
 // services: a producer sending a newer field set must not break an older
 // consumer built against this package.
 func TestUnknownFieldsAreIgnored(t *testing.T) {
-	data := []byte(`{"id":"task-1","type":"research","status":"pending","futureField":"unexpected"}`)
+	data := []byte(`{"id":"task-1","type":"research","status":"created","futureField":"unexpected"}`)
 
 	var task Task
 	if err := json.Unmarshal(data, &task); err != nil {
 		t.Fatalf("Unmarshal with unknown field returned error: %v", err)
 	}
-	if task.ID != "task-1" || task.Status != TaskStatusPending {
-		t.Errorf("got %+v, want ID=task-1 Status=pending", task)
+	if task.ID != "task-1" || task.Status != TaskStatusCreated {
+		t.Errorf("got %+v, want ID=task-1 Status=created", task)
+	}
+}
+
+func TestTaskTransition_JSONRoundTrip(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	want := TaskTransition{
+		TaskID:    "task-1",
+		From:      TaskStatusQueued,
+		To:        TaskStatusExecuting,
+		Timestamp: now,
+	}
+
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal(TaskTransition) returned error: %v", err)
+	}
+
+	var got TaskTransition
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal(TaskTransition) returned error: %v", err)
+	}
+	if got.TaskID != want.TaskID || got.From != want.From || got.To != want.To {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	if !got.Timestamp.Equal(want.Timestamp) {
+		t.Errorf("Timestamp = %v, want %v", got.Timestamp, want.Timestamp)
 	}
 }
 

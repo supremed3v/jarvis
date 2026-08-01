@@ -1,61 +1,27 @@
-# Current Feature: SPEC-0011 Task Model
+# Current Feature
 
 ## Working In
 
-Phase 3 (Execution) — packages/shared-types (extend existing `Task` struct) and/or a new services/core task package, per ADR-0007 (Tasks live in relational storage).
+Not Started
 
 ## Status
 
-In Progress
+Not Started
 
 ## Goals
 
-- Define the full Task data model: ID, Title, Description, Source, Priority, Status, Created timestamp, Updated timestamp, Parent task reference, Metadata.
-- Support Task Sources: Voice input, Desktop input, Agent generated, Scheduled.
-- Verify tasks can be created, serialize correctly, and preserve metadata.
+-
 
 ## Dependencies
 
-- SPEC-0001 Repository Foundation (status: Completed)
-- SPEC-0002 Development Environment (status: Completed)
-- SPEC-0003 Configuration System (status: Completed)
-- SPEC-0004 Shared Types Package (status: Completed)
-- SPEC-0005 Logging System (status: Completed)
-- SPEC-0006 Error Handling System (status: Completed)
-- SPEC-0007 Go Runtime Bootstrap (status: Completed)
-- SPEC-0008 Dependency Container (status: Completed)
-- SPEC-0009 Event Bus (status: Completed)
-- SPEC-0010 Internal Message Protocol (status: Completed)
-
-All of Phase 1 (Foundation) and Phase 2 (Runtime) are Completed per FEATURE_INDEX.md, so SPEC-0011 is unblocked as the first spec of Phase 3 (Execution).
+-
 
 ## Notes
 
-Specification:
-
-context/features/SPEC-0011-task-model.md
-
-Dependency resolution source: Implementation Order (Phase 3 Execution: 0011 Task Model -> 0012 State Machine -> 0013 Queue -> 0014 Workers -> 0015 Retry -> 0016 Scheduler) plus Dependency Graph (`Foundation -> Runtime -> Tasks`).
-
-**Task struct overlap — resolved:** user chose "extend in place" (additive). `packages/shared-types/task.go`'s existing fields (`Type, Input, Result, Error`) were kept as-is; SPEC-0011's required fields were added alongside them: `Title, Description, Source (TaskSource), Priority (TaskPriority), ParentID, Metadata`.
-
-`TaskSource` is a closed 4-value enum (`voice, desktop, agent, scheduled`) since SPEC-0011 itself enumerates these values. `TaskPriority` is a bare string type with **no** hardcoded constants — concrete levels (`LOW/NORMAL/HIGH/CRITICAL`) are explicitly SPEC-0013 Task Queue's "Priority Levels" section, not this spec's; this mirrors the SPEC-0004 precedent of `EventType` having no hardcoded constants since concrete event names belong to later specs.
-
-ADR-0007 (Storage Architecture) places Tasks in the relational storage layer — relevant once persistence is implemented (likely a later spec), not for this data-model-only spec.
-
-## Implementation Plan (executed)
-
-1. Add `TaskSource` type + 4 constants and `TaskPriority` type (no constants) to `packages/shared-types/task.go`.
-2. Extend `Task` struct with `Title, Description, Source, Priority, ParentID, Metadata` (all new optional fields `omitempty` except `Title`/`Source`, matching the spec's required-vs-optional shape).
-3. Update `TestTask_JSONRoundTrip` to cover the new fields; add `TestTask_SourceValues` (enum non-empty/uniqueness, matching `TestTask_StatusValues`/`TestMessage_TypeValues` convention) and `TestTask_EmptyOptionalFieldsOmitted` (all new omitempty fields plus existing `input/result/error`).
-
-Files modified: `packages/shared-types/task.go`, `packages/shared-types/types_test.go`. No new files; no services/agents/apps touched (data-model-only spec).
-
-## Testing
-
-`go build ./...`, `go vet ./...`, `go test ./... -v` clean across all 5 go.work modules (packages/config, packages/errors, packages/logger, packages/shared-types, services/core) — no regressions. `gofmt -l` flags every file in packages/shared-types, but `gofmt -d` confirms it's the pre-existing CRLF/LF line-ending artifact noted under SPEC-0008/SPEC-0007, not real formatting issues from this change.
+-
 
 ## History
 
-- 2026-08-01 load loaded SPEC-0011
-- 2026-08-01 start: branch `feature/task-model` created; extended `Task`/added `TaskSource`/`TaskPriority` in packages/shared-types per SPEC-0011; tests added; all 5 modules build/vet/test clean. Status still In Progress — test/review/complete actions not yet run.
+- 2026-08-01 SPEC-0012 Task State Machine — Completed. Replaced `packages/shared-types/task.go`'s provisional 5-value `TaskStatus` (`pending/running/completed/failed/cancelled`, added under SPEC-0011 with a comment deferring the real enum to this spec) with the 8 states SPEC-0012 requires — `created, planning, queued, executing, waiting, failed, completed, cancelled` (lowercase, matching the `TaskSource`/`MessageType`/`AgentStatus` convention; confirmed with user since nothing outside shared-types referenced the old names). Added `TaskTransition` (TaskID/From/To/Timestamp) as a shared data shape for a single recorded state change, mirroring the `Event` precedent. Transition *validation* and *history tracking* — real behavior, which SPEC-0004 explicitly keeps out of packages/shared-types ("shapes only, no business logic") — live instead in new `services/core/task_state_machine.go`: a closed `validTransitions` adjacency table, `CanTransition(from,to)`, and `StateMachine` (`Transition(task,to)` validates+mutates+records via `packages/errors` `TypeInvalidInput`/`TASK_INVALID_TRANSITION` on rejection; `History(taskID)` returns a defensive copy). Placed in `services/core` per `JARVIS_MASTER_ARCHITECTURE.md` ("Core Runtime: task execution") and `container.go`'s existing `TaskManager` placeholder comment; `container.go` itself was not touched, since that slot covers the full multi-spec Task Execution layer, not SPEC-0012 alone. `go build ./...`, `go vet ./...`, `go test ./... -v` clean across all 5 go.work modules; a review pass caught the `StateMachine` doc comment overclaiming full concurrent-use safety (the `history` map is mutex-protected, but `Transition` mutates the caller's `*Task` outside the lock) — fixed by narrowing the doc comment. `go test -race` unavailable in this environment (no cgo toolchain), same constraint noted under SPEC-0005/0007/0009. Built on feature/task-state-machine (off feature/task-model), merged into master. Full rationale: see docs/agents/JARVIS_BUILD_TRACKER.md (SPEC-0012 row).
+
+Earlier entries (SPEC-0001 through SPEC-0011): see docs/agents/JARVIS_BUILD_TRACKER.md and `git log` — this file's History section was not carried forward intact through the SPEC-0011 commit, so it is not reproduced here rather than reconstructed inexactly.
