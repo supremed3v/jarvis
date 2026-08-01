@@ -443,7 +443,7 @@ SPEC-0026-llm-provider-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
