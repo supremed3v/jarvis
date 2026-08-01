@@ -239,7 +239,7 @@ SPEC-0014-task-worker-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
