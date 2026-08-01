@@ -2,23 +2,40 @@
 
 ## Working In
 
-Not Started
+SPEC-0022 — Agent Execution Loop (`context/features/SPEC-0022-agent-execution-loop.md`)
 
 ## Status
 
-Not Started
+In Progress
 
 ## Goals
 
--
+- Implement the agent execution cycle: Receive Task -> Analyze Context -> Create Plan -> Select Tools -> Execute Actions -> Evaluate Result -> Return Response
+- Support multi-step execution, tool calls, intermediate results, and failure handling
+- Testing: agent completes simple tasks; tool execution works; failures return useful results
 
 ## Dependencies
 
--
+- SPEC-0018 Agent Interface (`Agent`/`AgentMetadata`, `services/core/agent.go`) — Completed
+- SPEC-0019 Agent Manifest System (`Manifest`, `NewAgentFromManifest`, `services/core/agent_manifest.go`) — Completed
+- SPEC-0020 Agent Registry (`AgentRegistry`/`Registry`, `services/core/agent_registry.go`) — Completed
+- SPEC-0021 Agent Lifecycle Manager (`LifecycleManager`, `services/core/agent_lifecycle.go`) — Completed
+- SPEC-0014 Task Worker (`Executor` signature, `services/core/task_worker.go`) — Completed; SPEC-0018 already aligned `Agent.Execute`'s signature to it
+- No Tool Registry (SPEC-0043..0045) or Memory system exists yet — per SPEC-0018's precedent, "Select Tools"/"Execute Actions" should stay scoped to what SPEC-0022 itself requires rather than pulling in unbuilt later-phase systems
 
 ## Notes
 
--
+- Per FEATURE_INDEX.md and JARVIS_BUILD_TRACKER.md, SPEC-0022 status is `Planned` — this is the next unit of work after SPEC-0021, per CLAUDE.md.
+- `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` groups this under Phase 4 Intelligence ("Agents") at a coarse-grained level (does not enumerate individual spec numbers within phases 4-6); `docs/execution/JARVIS_DEPENDENCY_GRAPH.md` has no per-spec entry for SPEC-0022 either. Prerequisite check is therefore based on JARVIS_BUILD_TRACKER.md completion status of SPEC-0018/0019/0020/0021/0014, all Completed.
+- Implementation started on `feature/agent-execution-loop` (off master, post SPEC-0021 merge). Added `services/core/agent_execution_loop.go`: `ExecutionLoop`/`NewExecutionLoop`, `Plan`/`Step`, and four pluggable hooks (`ContextAnalyzer`, `Planner`, `ToolCaller`, `ResultEvaluator`) implementing SPEC-0022's seven-stage cycle. Design decisions:
+  - "Select Tools" is not a separate pluggable hook: a `Step.Tool` field, set by the `Planner` when it builds the `Plan`, is what `Execute Actions` reads to decide whether/which tool to call. Tool selection is inseparable from planning which action a step performs, mirroring SPEC-0018's precedent that planning/tool-use stay internal to an Agent's `Execute` rather than becoming separate contract surface.
+  - `ContextAnalyzer`/`Planner`/`ToolCaller`/`ResultEvaluator` are caller-supplied function types (only `Planner` required), the same pattern `Executor` (SPEC-0014) and `AgentInitializer`/`AgentCleaner` (SPEC-0021) already established for behavior no spec below SPEC-0022 defines yet — there is still no LLM layer, Tool Registry, or Memory system for a loop to call directly.
+  - `ExecutionLoop.Run` has the exact `Executor`/`Agent.Execute` signature (`func(ctx, *types.Task) (map[string]any, error)`), so `loop.Run` can be passed straight to `NewAgentFromManifest`/`NewWorker` with no adapter — same "no adapter" precedent as SPEC-0018/SPEC-0019.
+  - Failure handling is fail-fast (stop at the first failing Step), matching `task_worker.go`'s existing precedent for `Executor` failures.
+  - "Failures return useful results" is satisfied by wrapping the failing step's error with `packages/errors` `.With("taskId", ...).With("step", ...).With("tool", ...).With("stepIndex", ...)` context, and by `Run` always returning the accumulated `steps`/`analysis` response map alongside a non-nil error (not just on success).
+  - No `Container` slot added (same reasoning as SPEC-0021: no pre-reserved placeholder exists for it).
+- `go build ./...`, `go vet ./...`, `go test ./... -v` clean across all 5 go.work modules; `gofmt -l` clean on both new files. 11 new tests covering all three SPEC-0022 testing criteria (simple task completion, tool execution with correct args/output capture, and failures returning useful/contextual results) plus plan/analysis-failure reporting, missing-ToolCaller handling, a `ResultEvaluator` rejecting an otherwise-successful step, an empty-Plan trivial success, and a full `Worker`-driven integration test proving no adapter is needed.
+- Not yet reviewed or merged — awaiting `/jarvis-feature review` and `/jarvis-feature complete` (BUILD_TRACKER/FEATURE_INDEX status update and merge to master happen at `complete`).
 
 ## History
 
