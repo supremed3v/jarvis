@@ -18,7 +18,7 @@ SPEC-0001-repository-foundation.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -35,7 +35,7 @@ SPEC-0002-development-environment.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -52,7 +52,7 @@ SPEC-0003-configuration-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -34,6 +34,28 @@ if (!(Test-Path $featuresPath)) {
 $emDash = [string][char]0x2014
 $fence = '```'
 
+# Status is tracked authoritatively in docs/agents/JARVIS_BUILD_TRACKER.md,
+# not derived from anything in context/features/. Parse it here so the
+# generated index reflects real progress instead of a hardcoded "Planned"
+# for every spec forever. Matching on the tracker's own declared status
+# words (rather than slicing by column position) avoids fragile dependence
+# on whitespace alignment in that table.
+$buildTrackerPath = "../docs/agents/JARVIS_BUILD_TRACKER.md"
+$statusValues = "Planned|In Progress|Blocked|Completed|Verified"
+$specStatus = @{}
+
+if (Test-Path $buildTrackerPath) {
+
+    Get-Content $buildTrackerPath | ForEach-Object {
+
+        if ($_ -match "^\s*(SPEC-\d{4})\s+($statusValues)\b") {
+            $specStatus[$matches[1]] = $matches[2]
+        }
+
+    }
+
+}
+
 $header = @"
 # JARVIS Feature Index
 
@@ -68,6 +90,9 @@ ForEach-Object {
         $prettyName = (Get-Culture).TextInfo.ToTitleCase($prettyName)
 
 
+        $status = if ($specStatus.ContainsKey($specID)) { $specStatus[$specID] } else { "Planned" }
+
+
         $content += @"
 
 ## $specID $emDash $prettyName
@@ -82,7 +107,7 @@ $fence
 
 Status:
 
-Planned
+$status
 
 
 ---
