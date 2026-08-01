@@ -80,5 +80,38 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("config: model.ollamaPort must be between 1 and 65535, got %d", cfg.Model.OllamaPort)
 	}
 
+	for name, model := range cfg.Model.Models {
+		if model.Provider == "" {
+			return fmt.Errorf("config: model.models[%q].provider must not be empty", name)
+		}
+		if model.Provider != "ollama" {
+			return fmt.Errorf("config: model.models[%q].provider %q is not supported (only \"ollama\" is, per ADR-0004)", name, model.Provider)
+		}
+		if model.Name == "" {
+			return fmt.Errorf("config: model.models[%q].name must not be empty", name)
+		}
+		if model.Temperature < 0 || model.Temperature > 2 {
+			return fmt.Errorf("config: model.models[%q].temperature must be between 0 and 2, got %v", name, model.Temperature)
+		}
+		if model.MaxTokens < 0 {
+			return fmt.Errorf("config: model.models[%q].maxTokens must not be negative, got %d", name, model.MaxTokens)
+		}
+	}
+
+	if len(cfg.Model.Models) > 0 && cfg.Model.DefaultModel == "" {
+		return fmt.Errorf("config: model.defaultModel must be set when model.models is non-empty")
+	}
+	if cfg.Model.DefaultModel != "" {
+		if _, ok := cfg.Model.Models[cfg.Model.DefaultModel]; !ok {
+			return fmt.Errorf("config: model.defaultModel %q has no entry in model.models", cfg.Model.DefaultModel)
+		}
+	}
+
+	for agent, key := range cfg.Model.AgentModels {
+		if _, ok := cfg.Model.Models[key]; !ok {
+			return fmt.Errorf("config: model.agentModels[%q] references unknown model %q", agent, key)
+		}
+	}
+
 	return nil
 }
