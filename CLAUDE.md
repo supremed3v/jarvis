@@ -8,9 +8,10 @@ JARVIS is a local-first personal AI operating system, currently in the **specifi
 
 Consequently there are **no build/lint/test commands to run** — the next unit of work per `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` is Phase 1 (SPEC-0001 Repository Foundation through SPEC-0006 Error Handling), which is what will actually create the toolchain. Do not invent build tooling that isn't specified; implement exactly what the relevant SPEC describes.
 
-The two PowerShell utilities in `scripts/` operate on the spec library itself, not on application code:
-- `scripts/generate_feature_index.ps1` — regenerates `context/features/FEATURE_INDEX.md` from all `SPEC-*.md` files (run from inside `scripts/`, since it uses relative `../context/features` paths).
+The PowerShell utilities in `scripts/` (run from inside `scripts/`, since each uses relative `../` paths):
+- `scripts/generate_feature_index.ps1` — regenerates `context/features/FEATURE_INDEX.md` from all `SPEC-*.md` files, deriving each spec's Status from `docs/agents/JARVIS_BUILD_TRACKER.md`.
 - `scripts/rename_specs.ps1` — normalizes spec filenames to `SPEC-NNNN-kebab-case-title.md`.
+- `scripts/go_all.ps1` — runs `go build`/`go vet`/`go test` (`./go_all.ps1 [all|build|vet|test]`, default `all`) inside every module listed in `go.work`, one at a time, with one aggregated pass/fail result. This is the standard way to build/vet/test the whole Go workspace: bare `go build ./...` from the repo root fails because the root has no `go.mod` of its own and isn't a workspace member — a Go workspace-mode constraint, not a bug — so don't try to "fix" that by adding a root `go.mod`; use this script (or `cd` into a specific module) instead.
 
 ## Required Workflow Before Coding
 
