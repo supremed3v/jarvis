@@ -732,7 +732,7 @@ SPEC-0043-tool-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
