@@ -63,6 +63,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.KnowledgeIngestionPipeline != nil {
 		t.Fatal("KnowledgeIngestionPipeline should be nil until wired via WithKnowledgeIngestionPipeline")
 	}
+	if c.ConsolidationEngine != nil {
+		t.Fatal("ConsolidationEngine should be nil until wired via WithConsolidationEngine")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -79,6 +82,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	memory := NewStorageMemory(NewLocalStore())
 	embeddingPipeline := NewEmbeddingPipeline(memory)
 	knowledgeIngestionPipeline := NewKnowledgeIngestionPipeline(embeddingPipeline)
+	consolidationEngine := NewConsolidationEngine(memory)
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
@@ -94,6 +98,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 		WithMemory(memory),
 		WithEmbeddingPipeline(embeddingPipeline),
 		WithKnowledgeIngestionPipeline(knowledgeIngestionPipeline),
+		WithConsolidationEngine(consolidationEngine),
 	)
 
 	if c.EventBus != eventBus {
@@ -134,6 +139,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.KnowledgeIngestionPipeline != knowledgeIngestionPipeline {
 		t.Fatal("WithKnowledgeIngestionPipeline did not wire the given value")
+	}
+	if c.ConsolidationEngine != consolidationEngine {
+		t.Fatal("WithConsolidationEngine did not wire the given value")
 	}
 }
 
