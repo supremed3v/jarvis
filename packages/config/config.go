@@ -10,6 +10,7 @@ type Config struct {
 	App      AppConfig       `json:"app"`
 	Model    ModelConfig     `json:"model"`
 	Tools    ToolPermissions `json:"tools"`
+	Voice    VoiceConfig     `json:"voice"`
 	Features map[string]bool `json:"features"`
 }
 
@@ -78,6 +79,17 @@ type ToolPermissions struct {
 	BrowserEnabled    bool `json:"browserEnabled"`
 }
 
+// VoiceConfig holds voice subsystem settings (SPEC-0053..0061).
+type VoiceConfig struct {
+	WakeWordModelPath string `json:"wakeWordModelPath"`
+	STTModel          string `json:"sttModel"`
+	TTSModel          string `json:"ttsModel"`
+	AudioDevice       string `json:"audioDevice"`
+	SampleRate        int    `json:"sampleRate"`
+	PythonPath        string `json:"pythonPath"`
+	PiperBinary       string `json:"piperBinary"`
+}
+
 // Defaults returns the built-in configuration used when no file or
 // environment override is present.
 func Defaults() Config {
@@ -110,6 +122,15 @@ func Defaults() Config {
 			FilesystemEnabled: false,
 			TerminalEnabled:   false,
 			BrowserEnabled:    false,
+		},
+		Voice: VoiceConfig{
+			WakeWordModelPath: "models/hey_jarvis.onnx",
+			STTModel:          "base.en",
+			TTSModel:          "en_US-amy-medium",
+			AudioDevice:       "default",
+			SampleRate:        16000,
+			PythonPath:        "python",
+			PiperBinary:       "piper",
 		},
 		Features: map[string]bool{},
 	}

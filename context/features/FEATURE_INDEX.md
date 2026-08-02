@@ -902,7 +902,7 @@ SPEC-0053-audio-engine-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -919,7 +919,7 @@ SPEC-0054-microphone-capture-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -936,7 +936,7 @@ SPEC-0055-wake-word-detection.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

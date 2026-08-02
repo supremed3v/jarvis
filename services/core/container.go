@@ -4,9 +4,80 @@
 package core
 
 import (
+	"context"
+
 	cfgpkg "jarvis-pa/packages/config"
 	"jarvis-pa/packages/logger"
 )
+
+// VoiceEngine provides audio capture and playback (SPEC-0053).
+type VoiceEngine interface {
+	Initialize(cfg *cfgpkg.VoiceConfig, log *logger.Logger) error
+	Capture() (<-chan []byte, error)
+	Playback(audio []byte) error
+	Shutdown() error
+}
+
+// WakeWordDetector detects wake word activations (SPEC-0055). Start takes
+// audioCh (the same shape STTProvider.StreamTranscribe's audioCh parameter
+// uses) as the source of audio to scan for the wake word - an implementation
+// consumes it internally rather than exposing a separate write method, so a
+// caller only ever needs Start/Stop to drive it.
+type WakeWordDetector interface {
+	Start(ctx context.Context, audioCh <-chan []byte, onDetect func()) error
+	Stop() error
+}
+
+// STTProvider converts speech to text (SPEC-0057).
+type STTProvider interface {
+	Transcribe(ctx context.Context, audio []byte) (string, error)
+	StreamTranscribe(ctx context.Context, audioCh <-chan []byte, textCh chan<- string) error
+}
+
+// TTSProvider converts text to speech (SPEC-0059).
+type TTSProvider interface {
+	Synthesize(ctx context.Context, text string) ([]byte, error)
+	StreamSynthesize(ctx context.Context, text string, audioCh chan<- []byte) error
+}
+
+// TerminalTool executes terminal commands and manages PTY sessions (SPEC-0050).
+type TerminalTool interface {
+	Execute(ctx context.Context, cmd string, args []string) (string, error)
+	StartSession(ctx context.Context, sessionID string) (TerminalSession, error)
+	StartClaudeCode(ctx context.Context, sessionID, projectPath string) (TerminalSession, error)
+}
+
+// TerminalSession is a persistent PTY session (SPEC-0050).
+type TerminalSession interface {
+	Write(data []byte) error
+	Read() ([]byte, error)
+	Close() error
+	Resize(cols, rows int) error
+}
+
+// FilesystemTool provides sandboxed filesystem access (SPEC-0049).
+type FilesystemTool interface {
+	ReadFile(ctx context.Context, path string) (string, error)
+	WriteFile(ctx context.Context, path, content string) error
+	ListDir(ctx context.Context, path string) ([]FileInfo, error)
+	Glob(ctx context.Context, pattern string) ([]string, error)
+}
+
+// FileInfo describes a filesystem entry (SPEC-0049).
+type FileInfo struct {
+	Name    string
+	Path    string
+	IsDir   bool
+	Size    int64
+	ModTime int64
+}
+
+// WSBridge handles WebSocket communication with the desktop app (SPEC-0065).
+type WSBridge interface {
+	Start(addr string) error
+	Stop() error
+	Broadcast(event string, payload any) error
+}
 
 // TaskManager is a placeholder slot for the Task Execution layer
 // (SPEC-0011..0017). Not yet implemented.
@@ -42,6 +113,14 @@ type Container struct {
 	Memory                     Memory
 	EmbeddingPipeline          *EmbeddingPipeline
 	KnowledgeIngestionPipeline *KnowledgeIngestionPipeline
+
+	VoiceEngine      VoiceEngine
+	WakeWordDetector WakeWordDetector
+	STTProvider      STTProvider
+	TTSProvider      TTSProvider
+	TerminalTool     TerminalTool
+	FilesystemTool   FilesystemTool
+	WSBridge         WSBridge
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -111,6 +190,41 @@ func WithEmbeddingPipeline(p *EmbeddingPipeline) ContainerOption {
 // Pipeline slot.
 func WithKnowledgeIngestionPipeline(p *KnowledgeIngestionPipeline) ContainerOption {
 	return func(c *Container) { c.KnowledgeIngestionPipeline = p }
+}
+
+// WithVoiceEngine sets the Container's Voice Engine slot.
+func WithVoiceEngine(v VoiceEngine) ContainerOption {
+	return func(c *Container) { c.VoiceEngine = v }
+}
+
+// WithWakeWordDetector sets the Container's Wake Word Detector slot.
+func WithWakeWordDetector(w WakeWordDetector) ContainerOption {
+	return func(c *Container) { c.WakeWordDetector = w }
+}
+
+// WithSTTProvider sets the Container's STT Provider slot.
+func WithSTTProvider(s STTProvider) ContainerOption {
+	return func(c *Container) { c.STTProvider = s }
+}
+
+// WithTTSProvider sets the Container's TTS Provider slot.
+func WithTTSProvider(t TTSProvider) ContainerOption {
+	return func(c *Container) { c.TTSProvider = t }
+}
+
+// WithTerminalTool sets the Container's Terminal Tool slot.
+func WithTerminalTool(t TerminalTool) ContainerOption {
+	return func(c *Container) { c.TerminalTool = t }
+}
+
+// WithFilesystemTool sets the Container's Filesystem Tool slot.
+func WithFilesystemTool(f FilesystemTool) ContainerOption {
+	return func(c *Container) { c.FilesystemTool = f }
+}
+
+// WithWSBridge sets the Container's WebSocket Bridge slot.
+func WithWSBridge(w WSBridge) ContainerOption {
+	return func(c *Container) { c.WSBridge = w }
 }
 
 // NewContainer creates a Container wired to the given Config and Logger.
