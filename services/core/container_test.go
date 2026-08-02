@@ -57,6 +57,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.Memory != nil {
 		t.Fatal("Memory should be nil until wired via WithMemory")
 	}
+	if c.EmbeddingPipeline != nil {
+		t.Fatal("EmbeddingPipeline should be nil until wired via WithEmbeddingPipeline")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -71,6 +74,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	windowManager := NewWindowManager()
 	budgetManager := NewBudgetManager(cfgpkg.ModelConfig{})
 	memory := NewStorageMemory(NewLocalStore())
+	embeddingPipeline := NewEmbeddingPipeline(memory)
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
@@ -84,6 +88,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 		WithWindowManager(windowManager),
 		WithBudgetManager(budgetManager),
 		WithMemory(memory),
+		WithEmbeddingPipeline(embeddingPipeline),
 	)
 
 	if c.EventBus != eventBus {
@@ -118,6 +123,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.Memory != memory {
 		t.Fatal("WithMemory did not wire the given value")
+	}
+	if c.EmbeddingPipeline != embeddingPipeline {
+		t.Fatal("WithEmbeddingPipeline did not wire the given value")
 	}
 }
 

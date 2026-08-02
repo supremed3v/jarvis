@@ -664,7 +664,7 @@ SPEC-0039-embedding-pipeline.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
