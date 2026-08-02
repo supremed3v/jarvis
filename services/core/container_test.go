@@ -60,6 +60,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.EmbeddingPipeline != nil {
 		t.Fatal("EmbeddingPipeline should be nil until wired via WithEmbeddingPipeline")
 	}
+	if c.KnowledgeIngestionPipeline != nil {
+		t.Fatal("KnowledgeIngestionPipeline should be nil until wired via WithKnowledgeIngestionPipeline")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -75,6 +78,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	budgetManager := NewBudgetManager(cfgpkg.ModelConfig{})
 	memory := NewStorageMemory(NewLocalStore())
 	embeddingPipeline := NewEmbeddingPipeline(memory)
+	knowledgeIngestionPipeline := NewKnowledgeIngestionPipeline(embeddingPipeline)
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
@@ -89,6 +93,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 		WithBudgetManager(budgetManager),
 		WithMemory(memory),
 		WithEmbeddingPipeline(embeddingPipeline),
+		WithKnowledgeIngestionPipeline(knowledgeIngestionPipeline),
 	)
 
 	if c.EventBus != eventBus {
@@ -126,6 +131,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.EmbeddingPipeline != embeddingPipeline {
 		t.Fatal("WithEmbeddingPipeline did not wire the given value")
+	}
+	if c.KnowledgeIngestionPipeline != knowledgeIngestionPipeline {
+		t.Fatal("WithKnowledgeIngestionPipeline did not wire the given value")
 	}
 }
 
