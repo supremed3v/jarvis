@@ -1,74 +1,53 @@
-# Current Feature
+﻿# Current Feature: Memory Interface
 
-## Overview
+## Working In
 
-Not started — no feature currently loaded. Next candidate per
-docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0034 (Memory Interface),
-the first spec of Phase 4 Intelligence's Memory branch, now that SPEC-0033
-(Token Budget Manager) is Completed and the LLM branch (SPEC-0026 through
-SPEC-0033) is entirely Completed.
+`services/core` (matches SPEC-0026 LLM Provider Interface's precedent of an
+interface-only spec living alongside the runtime it serves, rather than a
+new module) — first spec of the Memory layer, defining the storage-agnostic
+interface the runtime and future memory providers (SPEC-0035 Memory Storage
+Abstraction, SPEC-0036 Conversation Memory, SPEC-0037 User Profile Memory)
+will implement.
 
 ## Status
 
-Not Started
+Completed
 
 ## Goals
 
-_None yet._
+- Define memory operations: Store, Retrieve, Search, Update, Delete
+- Support memory types: Conversation, User Profile, Knowledge, Experience
+- Memory providers implement the interface via contract, not concrete storage
 
-## Files Modified
+## Dependencies
 
-_None yet._
+- SPEC-0018..0025 Agent layer (status: Completed)
+- SPEC-0026..0033 LLM layer (status: Completed)
+- No specific spec is declared as a hard prerequisite in FEATURE_INDEX.md
+  (it has no Dependencies field); resolved via
+  docs/execution/JARVIS_DEPENDENCY_GRAPH.md, which places Memory after
+  Agents/LLM/Tools in the core flow, and via
+  docs/execution/JARVIS_IMPLEMENTATION_ORDER.md, where SPEC-0034 is the next
+  spec after SPEC-0033 (Token Budget Manager, the last LLM-layer spec).
 
 ## Notes
 
-SPEC-0033 (Token Budget Manager) is now Completed (see
-docs/agents/JARVIS_BUILD_TRACKER.md, SPEC-0033 row, for full
-implementation/review rationale), completing Phase 4 Intelligence's LLM
-branch in full. SPEC-0034 (Memory Interface) is not causally unblocked by
-SPEC-0033 the way SPEC-0033 was by SPEC-0032/SPEC-0028 — per
-docs/execution/JARVIS_DEPENDENCY_GRAPH.md, Memory is a sibling branch of LLM
-(both depend only on the completed Agent layer, SPEC-0018 through SPEC-0025),
-not a downstream consumer of it. SPEC-0034 is simply the next spec in
-implementation order, defining the abstraction layer (store/retrieve/
-search/update/delete) the concrete Memory specs (SPEC-0035 onward: storage
-abstraction, conversation memory, user profile memory, vector engine,
-embedding pipeline) will implement against.
+Specification:
+
+context/features/SPEC-0034-memory-interface.md
+
+Index status at load time: Planned
+
+Dependency resolution source: Implementation Order + Dependency Graph (Step 4
+fallback chain — FEATURE_INDEX.md itself carries no per-spec Dependencies
+field yet).
+
+Related specs: SPEC-0035 Memory Storage Abstraction, SPEC-0036 Conversation
+Memory, SPEC-0037 User Profile Memory, SPEC-0038 Vector Memory Engine (all
+build on this interface; none are prerequisites).
 
 ## History
 
-- 2026-08-02 SPEC-0033 Token Budget Manager — Completed. Added
-  `services/core/token_budget_manager.go`: `BudgetManager` resolves a
-  per-agent token budget by combining `ModelConfig.ModelFor` (SPEC-0028)
-  with `Provider.ListModels`'s `ModelInfo.ContextSize` (SPEC-0026/27) —
-  falling back to a configurable default when no Provider is set or it
-  reports no match — the exact resolution `WindowManager.Fit` (SPEC-0032)
-  deliberately left unbuilt for this spec to own. `Record` accumulates
-  per-agent cumulative input/output token usage and classifies it into
-  `BudgetOK`/`BudgetWarning`/`BudgetExceeded` (default 80% warn threshold),
-  logging (counts/status only, never content) when not OK; `Report`/`Reset`
-  read/clear that state. `EstimateTokens` reuses SPEC-0032's own
-  `TokenEstimator` type rather than redefining one. `ReduceContext` composes
-  the resolved limit with a `WindowManager.Fit` call — the "context
-  reduction strategies" requirement. `Container` gained
-  `BudgetManager *BudgetManager` + `WithBudgetManager`, following the same
-  real-slot treatment every LLM-branch spec has gotten as it completed.
-  Reviewed against `docs/agents/CODE_REVIEW_PROTOCOL.md` (Architecture/Code
-  Quality/Security/Testing): found and fixed two issues — (1) `resolveModel`
-  was propagating `ModelConfig.ModelFor`'s bare `fmt.Errorf` unwrapped, the
-  only services/core component that would return an error with no
-  `packages/errors` `Type`; fixed via `errors.Wrap(..., TypeNotFound,
-  "BUDGET_MANAGER_MODEL_UNRESOLVED", ...)`, matching `ModelRouter`'s
-  `MODEL_ROUTER_NO_MODEL` precedent, plus a regression test. (2) a test
-  named `..._LogsWarningOnlyWhenNotOK` never actually inspected log output;
-  fixed using the same buffer-capture pattern
-  `TestWindowManager_Fit_LogsTrimming` (SPEC-0032) established, plus a new
-  `NoLoggerRunsSilently` test. Approved after fixes. `go build ./...`,
-  `go vet ./...`, `go test ./...` clean across all 5 go.work modules;
-  `gofmt -l` clean on both new files. Built on feature/token-budget-manager
-  (off master, post SPEC-0032 merge).
-
-Earlier entries (SPEC-0001 through SPEC-0033): see
-docs/agents/JARVIS_BUILD_TRACKER.md and `git log` — this file's History
-section is reset on each feature completion rather than accumulated
-indefinitely.
+- 2026-08-02 05:17 setup_feature.ps1 loaded SPEC-0034 (SPEC-0034-memory-interface.md)
+- 2026-08-02 load resolved dependencies (Step 4) and confirmed all prerequisite layers (Agent, LLM) are Completed per JARVIS_BUILD_TRACKER.md
+- 2026-08-02 start: branched feature/memory-interface off master; implemented services/core/memory_interface.go (Memory interface, MemoryRecord, MemoryQuery, MemoryType) and memory_interface_test.go (11 tests); go build/vet/test clean across all 5 go.work modules; updated JARVIS_BUILD_TRACKER.md and regenerated FEATURE_INDEX.md; status set to Completed

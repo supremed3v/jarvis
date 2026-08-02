@@ -579,7 +579,7 @@ SPEC-0034-memory-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
