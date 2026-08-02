@@ -596,7 +596,7 @@ SPEC-0035-memory-storage-abstraction.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

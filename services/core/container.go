@@ -18,11 +18,12 @@ type ToolRegistry interface{}
 
 // Container holds the shared services a Core Runtime component may depend
 // on. Config, Logger, EventBus, AgentRegistry, Provider, Router,
-// StreamHandler, PromptRegistry, WindowManager, and BudgetManager are wired
-// to their real SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020, SPEC-0026/0027,
-// SPEC-0029, SPEC-0030, SPEC-0031, SPEC-0032, and SPEC-0033 implementations;
-// the remaining slots are typed placeholders until their owning specs are
-// implemented. Every slot stays nil unless supplied via options.
+// StreamHandler, PromptRegistry, WindowManager, BudgetManager, and Memory are
+// wired to their real SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020,
+// SPEC-0026/0027, SPEC-0029, SPEC-0030, SPEC-0031, SPEC-0032, SPEC-0033, and
+// SPEC-0034/0035 implementations; the remaining slots are typed placeholders
+// until their owning specs are implemented. Every slot stays nil unless
+// supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
@@ -37,6 +38,7 @@ type Container struct {
 	PromptRegistry *PromptRegistry
 	WindowManager  *WindowManager
 	BudgetManager  *BudgetManager
+	Memory         Memory
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -90,6 +92,11 @@ func WithWindowManager(w *WindowManager) ContainerOption {
 // WithBudgetManager sets the Container's Token Budget Manager slot.
 func WithBudgetManager(m *BudgetManager) ContainerOption {
 	return func(c *Container) { c.BudgetManager = m }
+}
+
+// WithMemory sets the Container's Memory slot.
+func WithMemory(m Memory) ContainerOption {
+	return func(c *Container) { c.Memory = m }
 }
 
 // NewContainer creates a Container wired to the given Config and Logger.
