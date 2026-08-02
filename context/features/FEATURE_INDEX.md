@@ -630,7 +630,7 @@ SPEC-0037-user-profile-memory.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
