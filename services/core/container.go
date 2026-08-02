@@ -90,12 +90,12 @@ type ToolRegistry interface{}
 // Container holds the shared services a Core Runtime component may depend
 // on. Config, Logger, EventBus, AgentRegistry, Provider, Router,
 // StreamHandler, PromptRegistry, WindowManager, BudgetManager, Memory,
-// EmbeddingPipeline, and KnowledgeIngestionPipeline are wired to their real
-// SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020, SPEC-0026/0027, SPEC-0029,
-// SPEC-0030, SPEC-0031, SPEC-0032, SPEC-0033, SPEC-0034/0035, SPEC-0039, and
-// SPEC-0040 implementations; the remaining slots are typed placeholders
-// until their owning specs are implemented. Every slot stays nil unless
-// supplied via options.
+// EmbeddingPipeline, KnowledgeIngestionPipeline, and MemoryRetriever are
+// wired to their real SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020,
+// SPEC-0026/0027, SPEC-0029, SPEC-0030, SPEC-0031, SPEC-0032, SPEC-0033,
+// SPEC-0034/0035, SPEC-0039, SPEC-0040, and SPEC-0041 implementations; the
+// remaining slots are typed placeholders until their owning specs are
+// implemented. Every slot stays nil unless supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
@@ -113,6 +113,7 @@ type Container struct {
 	Memory                     Memory
 	EmbeddingPipeline          *EmbeddingPipeline
 	KnowledgeIngestionPipeline *KnowledgeIngestionPipeline
+	MemoryRetriever            *MemoryRetriever
 
 	VoiceEngine      VoiceEngine
 	WakeWordDetector WakeWordDetector
@@ -190,6 +191,11 @@ func WithEmbeddingPipeline(p *EmbeddingPipeline) ContainerOption {
 // Pipeline slot.
 func WithKnowledgeIngestionPipeline(p *KnowledgeIngestionPipeline) ContainerOption {
 	return func(c *Container) { c.KnowledgeIngestionPipeline = p }
+}
+
+// WithMemoryRetriever sets the Container's Memory Retriever slot.
+func WithMemoryRetriever(r *MemoryRetriever) ContainerOption {
+	return func(c *Container) { c.MemoryRetriever = r }
 }
 
 // WithVoiceEngine sets the Container's Voice Engine slot.
