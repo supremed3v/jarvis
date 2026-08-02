@@ -1,48 +1,37 @@
-# Current Feature: SPEC-0040 Knowledge Ingestion Pipeline
+# Current Feature
 
 ## Working In
 
-Memory layer, Phase 4 Intelligence (`services/core`)
+Not specified — no feature currently loaded.
 
 ## Status
 
-In Progress
+Not Started
 
 ## Goals
 
-- Ingest external knowledge into JARVIS memory from multiple source types:
-  Markdown files, PDFs, text files, code repositories, documentation
-- Implement the pipeline: Input -> Parser -> Chunking -> Embedding -> Storage
-- Verify: documents ingest successfully, content is searchable, metadata
-  remains attached
+_None yet._
 
 ## Dependencies
 
-- SPEC-0034 Memory Interface (status: Completed)
-- SPEC-0035 Memory Storage Abstraction (status: Completed)
-- SPEC-0038 Vector Memory Engine (status: Completed)
-- SPEC-0039 Embedding Pipeline (status: Completed) — SPEC-0040 sits directly
-  on top of this: 0039 already provides `Chunker`/`FixedSizeChunker`,
-  `EmbeddingPipeline`, and an `Embedder` (`OllamaEmbedder`) taking
-  `EmbeddingInput` (source type + content + metadata) through to storage.
-  0040's job is the missing front half — Input and Parser stages for
-  Markdown/PDF/text/code-repo/documentation sources — that feed into 0039's
-  existing chunk/embed/store stages.
+_None yet._
 
 ## Notes
 
-Specification:
+Both SPEC-0040 (Knowledge Ingestion Pipeline) and SPEC-0053/0054/0055
+(Audio Engine Interface / Microphone Capture System / Wake Word Detection)
+are now `Completed` and merged to master — see History below and their
+entries in `docs/agents/JARVIS_BUILD_TRACKER.md` for the full record.
 
-context/features/SPEC-0040-knowledge-ingestion-pipeline.md
-
-Dependency resolution source: Requirements inference (cross-referenced
-against JARVIS_IMPLEMENTATION_ORDER.md Phase 4 "Memory" grouping and
-JARVIS_DEPENDENCY_GRAPH.md's "Research requires: ... Knowledge, Memory"
-line). The Feature Index does not yet carry explicit Dependencies/Related
-fields for this entry, so Step 4's fallback chain was used; the spec's own
-pipeline diagram (Input -> Parser -> Chunking -> Embedding -> Storage) makes
-the Chunking/Embedding/Storage prerequisite on SPEC-0039/0038/0035/0034
-directly inferable.
+Next candidate: continuing the Voice branch of Phase 4 Intelligence per
+the voice-first MVP prioritization recorded in
+`docs/execution/JARVIS_MVP_SCOPE.md` — SPEC-0056 (Speech To Text Provider
+interface) and SPEC-0057 (Whisper Integration), matching
+`docs/IMPLEMENTATION_PLAN.md`'s "Phase 2: STT + TTS" roadmap. SPEC-0041/0042
+(Memory Retrieval/Consolidation) and the Tools layer (SPEC-0043-0052) remain
+Planned and are also unblocked, per `JARVIS_IMPLEMENTATION_ORDER.md`'s
+parallel Phase 4 branches - which to pick up next is a product-priority call
+for whoever loads the next feature.
 
 ## History
 
@@ -99,3 +88,15 @@ directly inferable.
   explicit user approval, since it required a raw-byte file truncation) a
   UTF-16 corruption in `docs/agents/JARVIS_BUILD_TRACKER.md` caused by
   another agent's own tracker-update script. Not yet merged.
+- 2026-08-03 complete: split into two commits (SPEC-0040 on
+  feature/knowledge-ingestion-pipeline; the voice fix moved to a new
+  feature/voice-pipeline-fix branch, matching this repo's one-feature-
+  per-branch merge convention) and merged both into master
+  (`Merge feature/knowledge-ingestion-pipeline: SPEC-0040 Knowledge
+  Ingestion Pipeline`, `Merge feature/voice-pipeline-fix: Fix
+  SPEC-0053/0054/0055 Voice Pipeline`), both clean no-conflict merges.
+  Re-verified `go build`/`vet`/`test` clean on master for package `core`,
+  the `voice` subpackage, and `packages/config`/`errors`/`logger`; `gofmt`
+  diffs on merged files confirmed to be the pre-existing CRLF/LF checkout
+  artifact only. Pushed master to origin
+  (`https://github.com/supremed3v/jarvis.git`, 450deb9..c6bd936).
