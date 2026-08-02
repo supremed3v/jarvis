@@ -613,7 +613,7 @@ SPEC-0036-conversation-memory.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
