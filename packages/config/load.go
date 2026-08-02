@@ -65,6 +65,31 @@ func applyEnvOverrides(cfg *Config) error {
 	if v, ok := os.LookupEnv("NVIDIA_API_BASE_URL"); ok {
 		cfg.Model.NvidiaBaseURL = v
 	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_WAKE_WORD_MODEL"); ok {
+		cfg.Voice.WakeWordModelPath = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_STT_MODEL"); ok {
+		cfg.Voice.STTModel = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_TTS_MODEL"); ok {
+		cfg.Voice.TTSModel = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_AUDIO_DEVICE"); ok {
+		cfg.Voice.AudioDevice = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_SAMPLE_RATE"); ok {
+		rate, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: invalid JARVIS_VOICE_SAMPLE_RATE %q: %w", v, err)
+		}
+		cfg.Voice.SampleRate = rate
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_PYTHON_PATH"); ok {
+		cfg.Voice.PythonPath = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_PIPER_BINARY"); ok {
+		cfg.Voice.PiperBinary = v
+	}
 
 	return nil
 }

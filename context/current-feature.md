@@ -76,3 +76,26 @@ directly inferable.
   timing-based, fails intermittently even on its own in isolation). Not yet
   merged; `/feature test`/`/feature review`/`/feature complete` still
   pending.
+- 2026-08-03 fixed SPEC-0053/0054/0055 (Audio Engine Interface / Microphone
+  Capture System / Wake Word Detection, the first three specs of the Voice
+  branch of Phase 4 Intelligence) alongside the above. Another agent's
+  concurrent draft in this same working tree was non-functional: the
+  `core.WakeWordDetector` interface had no way to receive audio at all
+  (`Microphone` fanned captured audio into a channel nothing read), PCM audio
+  was read via `bufio.Scanner` (newline-unsafe for binary data, 64KB cap),
+  two real concurrency bugs (send-on-closed-channel and an unsynchronized
+  nil-deref race), neither Python helper script existed anywhere in the
+  repo, and `voice_test.go`'s three tests could never fail (real errors were
+  `t.Logf`+`return`, not `t.Fail`). Fixed all of the above — see the
+  SPEC-0053 entry in `docs/agents/JARVIS_BUILD_TRACKER.md` for the full
+  write-up (interface change, new `framing.go` length-prefixed protocol,
+  `//go:embed`-ed Python scripts, self-owned cancellation in
+  `WakeWordDetectorImpl.Stop`, rewritten tests with real assertions/honest
+  `t.Skip`). Also recorded a product-scope decision:
+  `docs/execution/JARVIS_MVP_SCOPE.md`/`CLAUDE.md` now state voice (not the
+  desktop chat window) is the primary MVP interaction surface, per user
+  direction. `go build`/`vet`/`test` clean for the `voice` subpackage and for
+  package `core` non-recursively. One incident: found and fixed (with
+  explicit user approval, since it required a raw-byte file truncation) a
+  UTF-16 corruption in `docs/agents/JARVIS_BUILD_TRACKER.md` caused by
+  another agent's own tracker-update script. Not yet merged.

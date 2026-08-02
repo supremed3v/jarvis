@@ -41,14 +41,29 @@ Required:
 
 ## Interface
 
+Voice is the primary MVP interaction surface, not the desktop chat window.
+JARVIS is a voice-first assistant ("Jarvis" wake word -> speak -> hear a
+response); a full chat interface (SPEC-0066) is secondary and deferrable
+past MVP. The Application-phase target for MVP is a minimal visual
+presence only: System Tray (SPEC-0068) for status/control, plus Voice
+Interface UI (SPEC-0067, an orb/status view showing idle/listening/speaking
+state) - not a message-history chat window. Streaming responses still
+apply, but as streaming transcription/speech, not streaming chat text.
+
 Required:
 
--   Desktop chat interface
--   Streaming responses
+-   System tray presence
+-   Voice interface UI (status/orb view)
+-   Streaming responses (transcription + speech)
+
+Deferred past MVP:
+
+-   Full desktop chat interface (SPEC-0066)
 
 ## Voice
 
-Optional after MVP:
+Required (core feature, not deferrable, and the primary interaction
+surface per the Interface section above):
 
 -   Whisper
 -   Piper
@@ -56,7 +71,7 @@ Optional after MVP:
 
 ## Research
 
-Optional after MVP:
+Required (core feature, not deferrable):
 
 -   SearXNG
 -   Browser research agent

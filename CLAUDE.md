@@ -65,7 +65,7 @@ Never implement a feature whose dependencies (per the spec's own dependency list
 
 ### MVP scope (`docs/execution/JARVIS_MVP_SCOPE.md`)
 
-Before the full architecture, the MVP is: Go runtime + config + logging + events; Ollama integration + a basic agent + prompt system; conversation memory + user profile memory; filesystem/terminal/browser tools; a desktop chat interface with streaming responses. Voice (Whisper/Piper/wake word) and research (SearXNG/browser agent) are explicitly optional post-MVP.
+Before the full architecture, the MVP is: Go runtime + config + logging + events; Ollama integration + a basic agent + prompt system; conversation memory + user profile memory; filesystem/terminal/browser tools; voice (Whisper/Piper/wake word) and research (SearXNG/browser agent). Voice and research are core, required features, not optional or deferrable — do not deprioritize them to reach a desktop UI sooner. JARVIS is voice-first: voice is the primary MVP interaction surface, not a chat window. The MVP's Application-phase target is a minimal visual presence — System Tray (SPEC-0068) + Voice Interface UI (SPEC-0067, an orb/status view) — with the full desktop chat interface (SPEC-0066) deferred past MVP. See `docs/execution/JARVIS_MVP_SCOPE.md`'s `## Interface` section for the full rationale.
 
 ## Feature Specification System
 
