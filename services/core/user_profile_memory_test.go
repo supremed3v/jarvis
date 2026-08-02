@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"jarvis-pa/packages/errors"
@@ -162,6 +163,47 @@ func TestUserProfileMemory_UpdatesReplaceOutdatedInformation(t *testing.T) {
 	}
 	if len(facts) != 1 {
 		t.Errorf("Facts() returned %d facts, want 1 (update should not accumulate duplicates)", len(facts))
+	}
+}
+
+// TestUserProfileMemory_Remember_ConcurrentSameKeyConverges verifies
+// concurrent Remember calls for the same new Key converge to a single
+// record rather than racing: the check-then-act on byKey (does this Key
+// already exist?) must be atomic with the Store/Update decision it drives,
+// or the loser of the race would Store a record no Key ever points back
+// to again (regression test for a check-then-act race fixed during
+// review).
+func TestUserProfileMemory_Remember_ConcurrentSameKeyConverges(t *testing.T) {
+	pm := NewUserProfileMemory(NewStorageMemory(NewLocalStore()))
+	ctx := context.Background()
+
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			if _, err := pm.Remember(ctx, ProfileFact{
+				Key:      "preference:language",
+				Category: ProfileCategoryPreference,
+				Content:  "User prefers Go over Python",
+			}); err != nil {
+				t.Errorf("Remember() error = %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	facts, err := pm.Facts(ctx)
+	if err != nil {
+		t.Fatalf("Facts() error = %v", err)
+	}
+	if len(facts) != 1 {
+		t.Errorf("Facts() returned %d facts after concurrent Remember on one Key, want 1", len(facts))
+	}
+
+	if _, err := pm.Fact(ctx, "preference:language"); err != nil {
+		t.Errorf("Fact() error = %v, want the converged record to be reachable", err)
 	}
 }
 

@@ -162,14 +162,19 @@ func (p *UserProfileMemory) Remember(ctx context.Context, fact ProfileFact) (Pro
 	metadata[metaProfileKey] = fact.Key
 	metadata[metaProfileCategory] = string(fact.Category)
 
+	// Held across the whole read-decide-write sequence below, not just the
+	// map access: checking whether fact.Key already exists and then acting
+	// on that (Update vs. Store) has to be atomic, or two concurrent
+	// Remember calls for the same new Key could both see "not found," both
+	// Store a new record, and leave one of them permanently orphaned - no
+	// key would ever point to it again.
 	p.mu.Lock()
-	existingID, exists := p.byKey[fact.Key]
-	p.mu.Unlock()
+	defer p.mu.Unlock()
 
-	id := existingID
+	id, exists := p.byKey[fact.Key]
 	if exists {
 		if err := p.memory.Update(ctx, MemoryRecord{
-			ID:       existingID,
+			ID:       id,
 			Type:     MemoryTypeUserProfile,
 			Content:  fact.Content,
 			Metadata: metadata,
@@ -193,10 +198,7 @@ func (p *UserProfileMemory) Remember(ctx context.Context, fact ProfileFact) (Pro
 		return ProfileFact{}, err
 	}
 
-	p.mu.Lock()
 	p.byKey[fact.Key] = id
-	p.mu.Unlock()
-
 	return recordToFact(rec), nil
 }
 
