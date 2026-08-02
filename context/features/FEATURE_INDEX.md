@@ -562,7 +562,7 @@ SPEC-0033-token-budget-manager.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

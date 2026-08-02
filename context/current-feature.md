@@ -1,22 +1,74 @@
 # Current Feature
 
 ## Overview
-Not started — no feature currently loaded. Next candidate per docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0033 (Token Budget Manager), the next spec in Phase 4 Intelligence's LLM branch now that SPEC-0032 (Context Window Manager) is Completed.
+
+Not started — no feature currently loaded. Next candidate per
+docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0034 (Memory Interface),
+the first spec of Phase 4 Intelligence's Memory branch, now that SPEC-0033
+(Token Budget Manager) is Completed and the LLM branch (SPEC-0026 through
+SPEC-0033) is entirely Completed.
 
 ## Status
+
 Not Started
 
 ## Goals
+
 _None yet._
 
 ## Files Modified
+
 _None yet._
 
 ## Notes
-SPEC-0032 (Context Window Manager) is now Completed (see docs/agents/JARVIS_BUILD_TRACKER.md, SPEC-0032 row, for full implementation/review rationale). SPEC-0033 (Token Budget Manager) is unblocked: it owns resolving what a `WindowManager.Fit(Context, budget int)` (SPEC-0032) budget should actually be for a given model/agent — `packages/config`'s `Model.MaxTokens` (SPEC-0028) caps generated output length only, not input context size, so that resolution (model lookup, defaults, per-agent overrides) was deliberately left unbuilt for this spec to own.
+
+SPEC-0033 (Token Budget Manager) is now Completed (see
+docs/agents/JARVIS_BUILD_TRACKER.md, SPEC-0033 row, for full
+implementation/review rationale), completing Phase 4 Intelligence's LLM
+branch in full. SPEC-0034 (Memory Interface) is not causally unblocked by
+SPEC-0033 the way SPEC-0033 was by SPEC-0032/SPEC-0028 — per
+docs/execution/JARVIS_DEPENDENCY_GRAPH.md, Memory is a sibling branch of LLM
+(both depend only on the completed Agent layer, SPEC-0018 through SPEC-0025),
+not a downstream consumer of it. SPEC-0034 is simply the next spec in
+implementation order, defining the abstraction layer (store/retrieve/
+search/update/delete) the concrete Memory specs (SPEC-0035 onward: storage
+abstraction, conversation memory, user profile memory, vector engine,
+embedding pipeline) will implement against.
 
 ## History
 
-- 2026-08-02 SPEC-0032 Context Window Manager — Completed. Added `services/core/context_window_manager.go`: `WindowManager.Fit(Context, budget int) (Context, Usage)` sits directly on top of `ContextBuilder`/`Context`/`ContextItem` (SPEC-0023) without modifying them, providing the real token-accounting/prioritization layer `agent_context_builder.go`'s own package doc comment explicitly deferred to this spec. "Prioritize important information" is `ContextPriority` (`Low`/`Normal`/`High`/`Critical` — named `ContextPriority` rather than `Priority` to avoid colliding with `task_queue.go`'s existing `TaskPriority` constants, SPEC-0013) plus a `PriorityFunc` defaulting to ranking `UserMessage`/`Task` critical, `Memories` high, `ConversationHistory`/`AvailableTools` normal, `PreviousResults` low; within a tier, later (more recently added) items are kept over earlier ones. "Remove unnecessary context" is `Fit`'s greedy fill in priority-then-recency order, skipping (not aborting on) any item that doesn't fit so one oversized item can't starve smaller lower-priority ones. "Track token usage" is `Usage{Budget, Used, BySection}`, returned alongside the trimmed `Context` on every call. `TokenEstimator` defaults to a ~4-chars/token heuristic, a stand-in for a real tokenizer exactly as SPEC-0023's own word-count `defaultSizeEstimator` was. `Fit` deliberately takes budget as a caller-supplied int rather than resolving it from `Model.MaxTokens` (SPEC-0028 caps output length, not input context size) — that resolution is left to SPEC-0033 Token Budget Manager. `Container` gained `WindowManager *WindowManager` + `WithWindowManager`. Reviewed against `docs/agents/CODE_REVIEW_PROTOCOL.md` (Architecture/Code Quality/Security/Testing): found and fixed one real Code Quality bug — `Fit`'s trimming branch rebuilt `Truncated` from scratch instead of merging with the incoming `Context.Truncated`, silently losing record of sections an upstream `ContextBuilder` had already dropped entirely; fixed by seeding `droppedSections` from `c.Truncated`, plus regression test `TestWindowManager_Fit_PreservesUpstreamTruncation`. Approved after fix. `go build ./...`, `go vet ./...`, `go test ./...` clean across all 5 go.work modules; `gofmt -l` clean on both new files. Built on feature/context-window-manager (off master, post SPEC-0031 merge).
+- 2026-08-02 SPEC-0033 Token Budget Manager — Completed. Added
+  `services/core/token_budget_manager.go`: `BudgetManager` resolves a
+  per-agent token budget by combining `ModelConfig.ModelFor` (SPEC-0028)
+  with `Provider.ListModels`'s `ModelInfo.ContextSize` (SPEC-0026/27) —
+  falling back to a configurable default when no Provider is set or it
+  reports no match — the exact resolution `WindowManager.Fit` (SPEC-0032)
+  deliberately left unbuilt for this spec to own. `Record` accumulates
+  per-agent cumulative input/output token usage and classifies it into
+  `BudgetOK`/`BudgetWarning`/`BudgetExceeded` (default 80% warn threshold),
+  logging (counts/status only, never content) when not OK; `Report`/`Reset`
+  read/clear that state. `EstimateTokens` reuses SPEC-0032's own
+  `TokenEstimator` type rather than redefining one. `ReduceContext` composes
+  the resolved limit with a `WindowManager.Fit` call — the "context
+  reduction strategies" requirement. `Container` gained
+  `BudgetManager *BudgetManager` + `WithBudgetManager`, following the same
+  real-slot treatment every LLM-branch spec has gotten as it completed.
+  Reviewed against `docs/agents/CODE_REVIEW_PROTOCOL.md` (Architecture/Code
+  Quality/Security/Testing): found and fixed two issues — (1) `resolveModel`
+  was propagating `ModelConfig.ModelFor`'s bare `fmt.Errorf` unwrapped, the
+  only services/core component that would return an error with no
+  `packages/errors` `Type`; fixed via `errors.Wrap(..., TypeNotFound,
+  "BUDGET_MANAGER_MODEL_UNRESOLVED", ...)`, matching `ModelRouter`'s
+  `MODEL_ROUTER_NO_MODEL` precedent, plus a regression test. (2) a test
+  named `..._LogsWarningOnlyWhenNotOK` never actually inspected log output;
+  fixed using the same buffer-capture pattern
+  `TestWindowManager_Fit_LogsTrimming` (SPEC-0032) established, plus a new
+  `NoLoggerRunsSilently` test. Approved after fixes. `go build ./...`,
+  `go vet ./...`, `go test ./...` clean across all 5 go.work modules;
+  `gofmt -l` clean on both new files. Built on feature/token-budget-manager
+  (off master, post SPEC-0032 merge).
 
-Earlier entries (SPEC-0001 through SPEC-0032): see docs/agents/JARVIS_BUILD_TRACKER.md and `git log` — this file's History section is reset on each feature completion rather than accumulated indefinitely.
+Earlier entries (SPEC-0001 through SPEC-0033): see
+docs/agents/JARVIS_BUILD_TRACKER.md and `git log` — this file's History
+section is reset on each feature completion rather than accumulated
+indefinitely.

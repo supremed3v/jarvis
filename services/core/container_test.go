@@ -51,6 +51,9 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 	if c.WindowManager != nil {
 		t.Fatal("WindowManager should be nil until wired via WithWindowManager")
 	}
+	if c.BudgetManager != nil {
+		t.Fatal("BudgetManager should be nil until wired via WithBudgetManager")
+	}
 }
 
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
@@ -63,6 +66,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	streamHandler := NewStreamHandler(provider, logger.New("test"))
 	promptRegistry := NewPromptRegistry()
 	windowManager := NewWindowManager()
+	budgetManager := NewBudgetManager(cfgpkg.ModelConfig{})
 
 	c := NewContainer(&cfgpkg.Config{}, logger.New("test"),
 		WithEventBus(eventBus),
@@ -74,6 +78,7 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 		WithStreamHandler(streamHandler),
 		WithPromptRegistry(promptRegistry),
 		WithWindowManager(windowManager),
+		WithBudgetManager(budgetManager),
 	)
 
 	if c.EventBus != eventBus {
@@ -102,6 +107,9 @@ func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	}
 	if c.WindowManager != windowManager {
 		t.Fatal("WithWindowManager did not wire the given value")
+	}
+	if c.BudgetManager != budgetManager {
+		t.Fatal("WithBudgetManager did not wire the given value")
 	}
 }
 
