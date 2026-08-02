@@ -9,8 +9,8 @@ Memory layer (Phase 4 Intelligence) — `services/core` (Go), alongside
 
 ## Status
 
-Implemented — build/vet/test clean, not yet reviewed or merged
-(`/jarvis-feature review` / `complete` still pending).
+Reviewed, approved after fix — not yet merged (`/jarvis-feature complete`
+still pending).
 
 ## Goals
 
@@ -48,33 +48,44 @@ SPEC-0036's own load — `docs/execution/JARVIS_IMPLEMENTATION_ORDER.md` and
 `docs/execution/JARVIS_DEPENDENCY_GRAPH.md` name "Memory" only at the
 phase level, not per-spec.
 
-Not yet reviewed. Still pending: code review pass
-(`docs/agents/CODE_REVIEW_PROTOCOL.md`) and merge to master
+Reviewed against `docs/agents/CODE_REVIEW_PROTOCOL.md` (Architecture /
+Code Quality / Security / Testing). Still pending: merge to master
 (`/jarvis-feature complete`).
 
 ## History
 
-- 2026-08-02 SPEC-0037 User Profile Memory — Implemented (not yet
-  reviewed/merged). Added `services/core/user_profile_memory.go`:
-  `ProfileCategory` (`preference`/`personal_info`/`working_style`/
-  `project`/`fact`, matching the five categories the spec lists),
-  `ProfileFact` (Key/Category/Content/Metadata/timestamps), and
-  `UserProfileMemory` — a façade over SPEC-0034's `Memory` with
-  `Remember`/`Fact`/`Facts`, storing each fact as a
-  `MemoryRecord{Type: MemoryTypeUserProfile}` (a type SPEC-0034 already
-  defined but nothing used until now). `Remember` keeps an in-process
-  Key -> record ID index (same map+mutex approach `ConversationMemory`
-  and `memory_storage_local.go`'s `LocalStore` already use) so a second
-  `Remember` under an already-known Key calls `Memory.Update` in place
-  instead of `Memory.Store`-ing a duplicate — satisfying "updates replace
-  outdated information" without any free-text matching. No changes to
-  SPEC-0034/0035/0036 contracts or `container.go` — `UserProfileMemory`
-  wraps whatever `Memory` a caller already has, same as
-  `ConversationMemory`. 16 new tests covering all three SPEC-0037 testing
-  criteria plus validation and `Facts()` ordering. `go build`/`vet`/`test`
-  clean across all 5 go.work modules; `gofmt -l` clean on both new files.
-  Built on feature/user-profile-memory (off master, post SPEC-0036
-  merge). Still pending: code review pass and merge to master.
+- 2026-08-02 SPEC-0037 User Profile Memory — Implemented and reviewed
+  (approved after fix; not yet merged). Added
+  `services/core/user_profile_memory.go`: `ProfileCategory`
+  (`preference`/`personal_info`/`working_style`/`project`/`fact`,
+  matching the five categories the spec lists), `ProfileFact`
+  (Key/Category/Content/Metadata/timestamps), and `UserProfileMemory` —
+  a façade over SPEC-0034's `Memory` with `Remember`/`Fact`/`Facts`,
+  storing each fact as a `MemoryRecord{Type: MemoryTypeUserProfile}` (a
+  type SPEC-0034 already defined but nothing used until now). `Remember`
+  keeps an in-process Key -> record ID index (same map+mutex approach
+  `ConversationMemory` and `memory_storage_local.go`'s `LocalStore`
+  already use) so a second `Remember` under an already-known Key calls
+  `Memory.Update` in place instead of `Memory.Store`-ing a duplicate —
+  satisfying "updates replace outdated information" without any
+  free-text matching. No changes to SPEC-0034/0035/0036 contracts or
+  `container.go` — `UserProfileMemory` wraps whatever `Memory` a caller
+  already has, same as `ConversationMemory`. Reviewed against
+  `docs/agents/CODE_REVIEW_PROTOCOL.md`: found and fixed one real Code
+  Quality bug — `Remember`'s check-then-act on `byKey` (does this Key
+  already exist?) released the mutex before acting on the answer,
+  deciding `Store` vs. `Update` outside the lock; two concurrent
+  `Remember` calls on the same new Key could both see "not found," both
+  `Store`, and permanently orphan whichever record lost the final index
+  write. Fixed by holding the mutex across the whole read-decide-write
+  sequence, plus a regression test
+  (`TestUserProfileMemory_Remember_ConcurrentSameKeyConverges`). Approved
+  after fix. 17 tests total, covering all three SPEC-0037 testing
+  criteria plus validation, `Facts()` ordering, and the concurrency fix.
+  `go build`/`vet`/`test` clean across all 5 go.work modules; `gofmt -l`
+  clean on both new files. Built on feature/user-profile-memory (off
+  master, post SPEC-0036 merge). Still pending: merge to master
+  (`/jarvis-feature complete`).
 
 - 2026-08-02 SPEC-0036 Conversation Memory — Completed. Implemented
   services/core/conversation_memory.go (`MessageRole`, `ConversationMessage`,
