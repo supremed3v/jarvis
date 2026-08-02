@@ -33,7 +33,7 @@ func TestVectorStore_GetMissingIsNotFound(t *testing.T) {
 	}
 }
 
-func TestVectorStore_QueryRanksByWordOverlap(t *testing.T) {
+func TestVectorStore_QueryRanksBySimilarity(t *testing.T) {
 	s := NewVectorStore()
 	ctx := context.Background()
 
@@ -46,13 +46,100 @@ func TestVectorStore_QueryRanksByWordOverlap(t *testing.T) {
 		t.Fatalf("Query() error = %v", err)
 	}
 	if len(matches) != 2 {
-		t.Fatalf("Query() returned %d matches, want 2 (zero-overlap excluded)", len(matches))
+		t.Fatalf("Query() returned %d matches, want 2 (zero-similarity excluded)", len(matches))
 	}
 	if matches[0].ID != highID {
-		t.Errorf("Query()[0].ID = %q, want %q (highest overlap first)", matches[0].ID, highID)
+		t.Errorf("Query()[0].ID = %q, want %q (highest similarity first)", matches[0].ID, highID)
 	}
 	if matches[1].ID != lowID {
 		t.Errorf("Query()[1].ID = %q, want %q", matches[1].ID, lowID)
+	}
+}
+
+// TestVectorStore_QuerySimilarityDistinguishesExactFromNoisyMatch verifies
+// ranking is real cosine similarity, not a raw shared-word count: a record
+// that exactly matches the query outranks one that shares the same words
+// plus several unrelated ones (both would tie under a raw-overlap-count
+// scorer, since both share exactly 2 words with the query).
+func TestVectorStore_QuerySimilarityDistinguishesExactFromNoisyMatch(t *testing.T) {
+	s := NewVectorStore()
+	ctx := context.Background()
+
+	exactID := mustPut(t, s, MemoryRecord{Type: MemoryTypeKnowledge, Content: "alpha beta"})
+	noisyID := mustPut(t, s, MemoryRecord{Type: MemoryTypeKnowledge, Content: "alpha beta gamma delta epsilon zeta"})
+
+	matches, err := s.Query(ctx, MemoryQuery{Query: "alpha beta"})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("Query() returned %d matches, want 2", len(matches))
+	}
+	if matches[0].ID != exactID {
+		t.Errorf("Query()[0].ID = %q, want %q (exact match ranks above noisy match)", matches[0].ID, exactID)
+	}
+	if matches[1].ID != noisyID {
+		t.Errorf("Query()[1].ID = %q, want %q", matches[1].ID, noisyID)
+	}
+}
+
+// TestVectorStore_QueryMetadataFiltering is SPEC-0038's "Filtering works"
+// testing criterion: Query only returns candidates whose Metadata matches
+// every key/value pair in q.Filters.
+func TestVectorStore_QueryMetadataFiltering(t *testing.T) {
+	s := NewVectorStore()
+	ctx := context.Background()
+
+	workID := mustPut(t, s, MemoryRecord{
+		Type: MemoryTypeKnowledge, Content: "project status update",
+		Metadata: map[string]any{"category": "work"},
+	})
+	mustPut(t, s, MemoryRecord{
+		Type: MemoryTypeKnowledge, Content: "project status update",
+		Metadata: map[string]any{"category": "personal"},
+	})
+
+	matches, err := s.Query(ctx, MemoryQuery{
+		Query:   "project status update",
+		Filters: map[string]any{"category": "work"},
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].ID != workID {
+		t.Errorf("Query() with Filters = %+v, want single match %q", matches, workID)
+	}
+
+	none, err := s.Query(ctx, MemoryQuery{
+		Query:   "project status update",
+		Filters: map[string]any{"category": "nonexistent"},
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("Query() with non-matching Filters returned %d matches, want 0", len(none))
+	}
+}
+
+// TestVectorStore_ReplaceRecomputesEmbedding verifies Replace re-embeds the
+// new Content rather than leaving the old embedding in place.
+func TestVectorStore_ReplaceRecomputesEmbedding(t *testing.T) {
+	s := NewVectorStore()
+	ctx := context.Background()
+
+	localID := mustPut(t, s, MemoryRecord{Type: MemoryTypeKnowledge, Content: "zzz yyy xxx"})
+
+	if err := s.Replace(ctx, localID, MemoryRecord{Type: MemoryTypeKnowledge, Content: "alpha beta"}); err != nil {
+		t.Fatalf("Replace() error = %v", err)
+	}
+
+	matches, err := s.Query(ctx, MemoryQuery{Query: "alpha beta"})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].ID != localID {
+		t.Errorf("Query() after Replace = %+v, want single match %q with updated embedding", matches, localID)
 	}
 }
 
@@ -91,6 +178,30 @@ func TestVectorStore_RemoveThenGetIsNotFound(t *testing.T) {
 	}
 	if _, err := s.Get(ctx, localID); !errors.Is(err, errors.TypeNotFound) {
 		t.Errorf("Get() after Remove error = %v, want TypeNotFound", err)
+	}
+}
+
+func TestVectorStore_RemoveMissingIsNotFound(t *testing.T) {
+	err := NewVectorStore().Remove(context.Background(), "missing")
+	if !errors.Is(err, errors.TypeNotFound) {
+		t.Errorf("Remove() of missing ID error = %v, want TypeNotFound", err)
+	}
+}
+
+// TestVectorStore_QueryFiltersExcludeRecordsWithNilMetadata is an edge case
+// for metadata filtering: a record with no Metadata at all never matches a
+// non-empty Filters, rather than panicking on a nil map read.
+func TestVectorStore_QueryFiltersExcludeRecordsWithNilMetadata(t *testing.T) {
+	s := NewVectorStore()
+	ctx := context.Background()
+	mustPut(t, s, MemoryRecord{Type: MemoryTypeKnowledge, Content: "alpha beta"})
+
+	matches, err := s.Query(ctx, MemoryQuery{Query: "alpha beta", Filters: map[string]any{"category": "work"}})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("Query() with Filters against nil Metadata = %+v, want 0 matches", matches)
 	}
 }
 

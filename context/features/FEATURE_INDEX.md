@@ -647,7 +647,7 @@ SPEC-0038-vector-memory-engine.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -189,3 +189,37 @@ func TestStorageMemory_SearchMergesAcrossProviders(t *testing.T) {
 		t.Errorf("Search() with empty Query error = %v, want TypeInvalidInput", err)
 	}
 }
+
+// TestStorageMemory_SearchPropagatesFiltersToProvider verifies q.Filters
+// (SPEC-0038 metadata filtering) reaches the underlying MemoryStorageProvider
+// unchanged when driven through the Memory interface, not just when calling
+// a provider's Query directly.
+func TestStorageMemory_SearchPropagatesFiltersToProvider(t *testing.T) {
+	ctx := context.Background()
+	mem := NewStorageMemory(NewLocalStore(), WithProviderFor(MemoryTypeKnowledge, NewVectorStore()))
+
+	if _, err := mem.Store(ctx, MemoryRecord{
+		Type: MemoryTypeKnowledge, Content: "project status update",
+		Metadata: map[string]any{"category": "work"},
+	}); err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+	if _, err := mem.Store(ctx, MemoryRecord{
+		Type: MemoryTypeKnowledge, Content: "project status update",
+		Metadata: map[string]any{"category": "personal"},
+	}); err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	matches, err := mem.Search(ctx, MemoryQuery{
+		Query:   "project status update",
+		Type:    MemoryTypeKnowledge,
+		Filters: map[string]any{"category": "work"},
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Metadata["category"] != "work" {
+		t.Errorf("Search() with Filters = %+v, want single match with category=work", matches)
+	}
+}
