@@ -1,33 +1,54 @@
 // memory_storage_vector.go implements VectorStore, the SPEC-0035 "Vector
-// storage" MemoryStorageProvider. Real embedding-based similarity is
-// SPEC-0038 (Vector Memory Engine) and SPEC-0039 (Embedding Pipeline)'s job;
-// this spec only needs a backend whose retrieval behaves differently from
-// LocalStore's exact substring match while satisfying the same contract, so
-// Query instead ranks candidates by a naive word-overlap score - a
-// placeholder relevance measure, not a real vector similarity metric.
+// storage" MemoryStorageProvider, upgraded per SPEC-0038 (Vector Memory
+// Engine) to real embedding-based similarity: every record is embedded via
+// an Embedder (memory_embedding.go) on write, and Query ranks candidates by
+// cosine similarity between the query's embedding and each candidate's,
+// with metadata filtering applied first. Real model-backed embedding
+// generation is SPEC-0039 (Embedding Pipeline)'s job - VectorStore accepts
+// any Embedder, defaulting to the dependency-free HashEmbedder.
 package core
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
 
 // VectorStore is a MemoryStorageProvider backed by an in-memory map,
-// representing SPEC-0035's vector storage backend. VectorStore is safe for
-// concurrent use.
+// representing SPEC-0035's vector storage backend with SPEC-0038's
+// embedding-based similarity search. VectorStore is safe for concurrent use.
 type VectorStore struct {
-	mu      sync.Mutex
-	records map[string]MemoryRecord
-	nextID  int
+	mu         sync.Mutex
+	records    map[string]MemoryRecord
+	embeddings map[string][]float64
+	nextID     int
+	embedder   Embedder
 }
 
-// NewVectorStore creates an empty VectorStore.
-func NewVectorStore() *VectorStore {
-	return &VectorStore{records: make(map[string]MemoryRecord)}
+// VectorStoreOption configures a VectorStore created by NewVectorStore.
+type VectorStoreOption func(*VectorStore)
+
+// WithEmbedder overrides the Embedder a VectorStore uses to embed record
+// content and queries. The default is a HashEmbedder.
+func WithEmbedder(e Embedder) VectorStoreOption {
+	return func(s *VectorStore) { s.embedder = e }
+}
+
+// NewVectorStore creates an empty VectorStore, defaulting to a HashEmbedder
+// unless overridden via WithEmbedder.
+func NewVectorStore(opts ...VectorStoreOption) *VectorStore {
+	s := &VectorStore{
+		records:    make(map[string]MemoryRecord),
+		embeddings: make(map[string][]float64),
+		embedder:   NewHashEmbedder(),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Name implements MemoryStorageProvider.
@@ -46,6 +67,7 @@ func (s *VectorStore) Put(_ context.Context, rec MemoryRecord) (string, error) {
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
 	s.records[localID] = rec
+	s.embeddings[localID] = s.embedder.Embed(rec.Content)
 	return localID, nil
 }
 
@@ -61,28 +83,32 @@ func (s *VectorStore) Get(_ context.Context, localID string) (MemoryRecord, erro
 	return rec, nil
 }
 
-// Query implements MemoryStorageProvider: candidates are scored by the
-// number of words shared with q.Query (case-insensitive), zero-score
-// candidates are excluded, and the rest are ordered by score descending
-// (ties broken by CreatedAt ascending), capped at q.Limit (0 meaning no
-// cap).
+// Query implements MemoryStorageProvider: candidates are narrowed by q.Type
+// and q.Filters (each Filters key must equal-match rec.Metadata), scored by
+// cosine similarity between q.Query's embedding and the candidate's stored
+// embedding, zero-or-negative-score candidates are excluded, and the rest
+// are ordered by score descending (ties broken by CreatedAt ascending),
+// capped at q.Limit (0 meaning no cap).
 func (s *VectorStore) Query(_ context.Context, q MemoryQuery) ([]MemoryRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	queryWords := wordSet(q.Query)
+	queryVec := s.embedder.Embed(q.Query)
 
 	type scored struct {
 		rec   MemoryRecord
-		score int
+		score float64
 	}
 	var candidates []scored
-	for _, rec := range s.records {
+	for id, rec := range s.records {
 		if q.Type != "" && rec.Type != q.Type {
 			continue
 		}
-		score := overlapScore(queryWords, wordSet(rec.Content))
-		if score == 0 {
+		if !matchesFilters(rec, q.Filters) {
+			continue
+		}
+		score := cosineSimilarity(queryVec, s.embeddings[id])
+		if score <= 0 {
 			continue
 		}
 		candidates = append(candidates, scored{rec: rec, score: score})
@@ -105,6 +131,18 @@ func (s *VectorStore) Query(_ context.Context, q MemoryQuery) ([]MemoryRecord, e
 	return matches, nil
 }
 
+// matchesFilters reports whether rec.Metadata equal-matches every key/value
+// pair in filters. An empty or nil filters matches everything.
+func matchesFilters(rec MemoryRecord, filters map[string]any) bool {
+	for k, want := range filters {
+		got, ok := rec.Metadata[k]
+		if !ok || !reflect.DeepEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
 // Replace implements MemoryStorageProvider.
 func (s *VectorStore) Replace(_ context.Context, localID string, rec MemoryRecord) error {
 	s.mu.Lock()
@@ -118,6 +156,7 @@ func (s *VectorStore) Replace(_ context.Context, localID string, rec MemoryRecor
 	rec.CreatedAt = existing.CreatedAt
 	rec.UpdatedAt = time.Now()
 	s.records[localID] = rec
+	s.embeddings[localID] = s.embedder.Embed(rec.Content)
 	return nil
 }
 
@@ -130,26 +169,6 @@ func (s *VectorStore) Remove(_ context.Context, localID string) error {
 		return notFoundErr("MEMORY_VECTOR_STORE_NOT_FOUND", localID)
 	}
 	delete(s.records, localID)
+	delete(s.embeddings, localID)
 	return nil
-}
-
-// wordSet lowercases and splits s into a set of its distinct words.
-func wordSet(s string) map[string]bool {
-	words := strings.Fields(strings.ToLower(s))
-	set := make(map[string]bool, len(words))
-	for _, w := range words {
-		set[w] = true
-	}
-	return set
-}
-
-// overlapScore counts how many words a and b have in common.
-func overlapScore(a, b map[string]bool) int {
-	score := 0
-	for w := range a {
-		if b[w] {
-			score++
-		}
-	}
-	return score
 }
