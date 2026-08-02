@@ -681,7 +681,7 @@ SPEC-0040-knowledge-ingestion-pipeline.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

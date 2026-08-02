@@ -18,28 +18,30 @@ type ToolRegistry interface{}
 
 // Container holds the shared services a Core Runtime component may depend
 // on. Config, Logger, EventBus, AgentRegistry, Provider, Router,
-// StreamHandler, PromptRegistry, WindowManager, BudgetManager, Memory, and
-// EmbeddingPipeline are wired to their real SPEC-0003, SPEC-0005, SPEC-0009,
-// SPEC-0020, SPEC-0026/0027, SPEC-0029, SPEC-0030, SPEC-0031, SPEC-0032,
-// SPEC-0033, SPEC-0034/0035, and SPEC-0039 implementations; the remaining
-// slots are typed placeholders until their owning specs are implemented.
-// Every slot stays nil unless supplied via options.
+// StreamHandler, PromptRegistry, WindowManager, BudgetManager, Memory,
+// EmbeddingPipeline, and KnowledgeIngestionPipeline are wired to their real
+// SPEC-0003, SPEC-0005, SPEC-0009, SPEC-0020, SPEC-0026/0027, SPEC-0029,
+// SPEC-0030, SPEC-0031, SPEC-0032, SPEC-0033, SPEC-0034/0035, SPEC-0039, and
+// SPEC-0040 implementations; the remaining slots are typed placeholders
+// until their owning specs are implemented. Every slot stays nil unless
+// supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
 
-	EventBus          EventBus
-	TaskManager       TaskManager
-	ToolRegistry      ToolRegistry
-	AgentRegistry     AgentRegistry
-	Provider          Provider
-	Router            *ModelRouter
-	StreamHandler     *StreamHandler
-	PromptRegistry    *PromptRegistry
-	WindowManager     *WindowManager
-	BudgetManager     *BudgetManager
-	Memory            Memory
-	EmbeddingPipeline *EmbeddingPipeline
+	EventBus                   EventBus
+	TaskManager                TaskManager
+	ToolRegistry               ToolRegistry
+	AgentRegistry              AgentRegistry
+	Provider                   Provider
+	Router                     *ModelRouter
+	StreamHandler              *StreamHandler
+	PromptRegistry             *PromptRegistry
+	WindowManager              *WindowManager
+	BudgetManager              *BudgetManager
+	Memory                     Memory
+	EmbeddingPipeline          *EmbeddingPipeline
+	KnowledgeIngestionPipeline *KnowledgeIngestionPipeline
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -103,6 +105,12 @@ func WithMemory(m Memory) ContainerOption {
 // WithEmbeddingPipeline sets the Container's Embedding Pipeline slot.
 func WithEmbeddingPipeline(p *EmbeddingPipeline) ContainerOption {
 	return func(c *Container) { c.EmbeddingPipeline = p }
+}
+
+// WithKnowledgeIngestionPipeline sets the Container's Knowledge Ingestion
+// Pipeline slot.
+func WithKnowledgeIngestionPipeline(p *KnowledgeIngestionPipeline) ContainerOption {
+	return func(c *Container) { c.KnowledgeIngestionPipeline = p }
 }
 
 // NewContainer creates a Container wired to the given Config and Logger.
