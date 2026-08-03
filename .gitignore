@@ -5,3 +5,7 @@ build/
 .env
 .env.local
 .DS_Store
+
+# Voice models (Wake word / STT / TTS) - fetched locally per docs/execution/JARVIS_MVP_SCOPE.md,
+# not committed due to binary size (tens of MB per model).
+models/
