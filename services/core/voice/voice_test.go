@@ -67,7 +67,7 @@ func (f *fakeVoiceEngine) Capture() (<-chan []byte, error) {
 	return f.captureCh, nil
 }
 
-func (f *fakeVoiceEngine) Playback(audio []byte) error { return nil }
+func (f *fakeVoiceEngine) Playback(audio []byte, sampleRate int) error { return nil }
 
 func (f *fakeVoiceEngine) ListDevices() ([]core.AudioDevice, error) { return nil, nil }
 
@@ -250,7 +250,7 @@ func TestAudioEngine_Playback_BeforeInitialize(t *testing.T) {
 		t.Fatalf("NewAudioEngine() error = %v", err)
 	}
 
-	if err := engine.Playback([]byte{1, 2, 3}); err == nil {
+	if err := engine.Playback([]byte{1, 2, 3}, cfg.Voice.SampleRate); err == nil {
 		t.Fatal("Playback() error = nil, want an error before Initialize")
 	}
 }

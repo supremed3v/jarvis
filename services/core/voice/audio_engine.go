@@ -230,11 +230,13 @@ func (e *AudioEngine) readCaptureLoop(stdout io.Reader, captureCh chan<- []byte)
 	}
 }
 
-// Playback implements core.VoiceEngine: it plays raw PCM audio (per
-// cfg.SampleRate, mono, int16 LE) via a one-shot Python playback subprocess.
+// Playback implements core.VoiceEngine: it plays raw PCM audio (mono, int16
+// LE) at sampleRate via a one-shot Python playback subprocess. sampleRate is
+// the caller's to specify (see the core.VoiceEngine.Playback doc comment) -
+// AudioEngine does not assume audio was captured at its own cfg.SampleRate.
 // It does not hold the engine's mutex across the subprocess's lifetime, so a
 // slow or hung playback can't block Capture/Shutdown/a later Playback call.
-func (e *AudioEngine) Playback(audio []byte) error {
+func (e *AudioEngine) Playback(audio []byte, sampleRate int) error {
 	e.mu.Lock()
 	if !e.running {
 		e.mu.Unlock()
@@ -242,7 +244,6 @@ func (e *AudioEngine) Playback(audio []byte) error {
 	}
 	pythonPath := e.pythonPath
 	scriptPath := e.scriptPath
-	sampleRate := e.cfg.SampleRate
 	e.mu.Unlock()
 
 	if len(audio) == 0 {
