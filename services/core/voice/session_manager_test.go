@@ -25,9 +25,10 @@ import (
 // actually spoken.
 type recordingVoiceEngine struct {
 	*fakeVoiceEngine
-	mu          sync.Mutex
-	played      [][]byte
-	sampleRates []int
+	mu                sync.Mutex
+	played            [][]byte
+	sampleRates       []int
+	playbackStreamErr error // if set, PlaybackStream returns it immediately without draining audioCh
 }
 
 func (r *recordingVoiceEngine) Playback(audio []byte, sampleRate int) error {
@@ -45,6 +46,13 @@ func (r *recordingVoiceEngine) Playback(audio []byte, sampleRate int) error {
 // each one carried using the same played/sampleRates fields and helpers as
 // the non-streaming tests.
 func (r *recordingVoiceEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+	r.mu.Lock()
+	err := r.playbackStreamErr
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
 	var buf []byte
 	for {
 		select {
@@ -91,9 +99,10 @@ type fakeTTSProvider struct {
 	err       error
 	callCount int
 
-	streamTexts []string
-	streamAudio []byte
-	streamErr   error
+	streamTexts  []string
+	streamAudio  []byte
+	streamErr    error
+	streamChunks int // number of chunks StreamSynthesize sends before returning; <= 0 means 1
 }
 
 func (f *fakeTTSProvider) Synthesize(ctx context.Context, text string, opts core.VoiceOptions) ([]byte, error) {
@@ -109,14 +118,15 @@ func (f *fakeTTSProvider) Synthesize(ctx context.Context, text string, opts core
 
 // StreamSynthesize records text, then - unless streamErr is set - writes
 // streamAudio (or a default derived from text, if streamAudio is unset) to
-// audioCh as a single chunk before returning, respecting ctx cancellation
-// while sending. The caller owns and closes audioCh, matching
+// audioCh streamChunks times (default 1) before returning, respecting ctx
+// cancellation while sending. The caller owns and closes audioCh, matching
 // core.TTSProvider.StreamSynthesize's real contract.
 func (f *fakeTTSProvider) StreamSynthesize(ctx context.Context, text string, opts core.VoiceOptions, audioCh chan<- []byte) error {
 	f.mu.Lock()
 	f.streamTexts = append(f.streamTexts, text)
 	streamErr := f.streamErr
 	audio := f.streamAudio
+	n := f.streamChunks
 	f.mu.Unlock()
 
 	if streamErr != nil {
@@ -125,10 +135,15 @@ func (f *fakeTTSProvider) StreamSynthesize(ctx context.Context, text string, opt
 	if audio == nil {
 		audio = []byte("audio:" + text)
 	}
-	select {
-	case audioCh <- audio:
-	case <-ctx.Done():
-		return ctx.Err()
+	if n <= 0 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case audioCh <- audio:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return nil
 }
@@ -553,6 +568,49 @@ func TestSessionManager_StreamingHandler_FailsWhenHandlerErrors(t *testing.T) {
 	}
 	if n := len(tts.streamSynthesizeTexts()); n != 0 {
 		t.Errorf("tts was invoked %d times despite the streaming handler failing before producing any text", n)
+	}
+}
+
+// TestSessionManager_StreamingHandler_PlaybackFailureDoesNotDeadlock is a
+// regression test for a real deadlock found in review: if PlaybackStream
+// fails/returns before draining audioCh, and StreamSynthesize's goroutine is
+// still trying to send more than the channel's buffer holds, the producer
+// blocks forever unless something cancels its ctx - which speakSentence used
+// to only do after receiving on synthDone, a cycle that could never resolve.
+// tts is configured to send more chunks than streamAudioBufferSize so the
+// producer genuinely has more to send than fits in the buffer, and the
+// engine is configured to fail PlaybackStream immediately without reading
+// any of them. Before the fix, this test would hang until waitForEvent's own
+// 2-second timeout fails it; after the fix, the failure event arrives
+// promptly.
+func TestSessionManager_StreamingHandler_PlaybackFailureDoesNotDeadlock(t *testing.T) {
+	tts := &fakeTTSProvider{streamChunks: streamAudioBufferSize + 4}
+	batchHandler := func(ctx context.Context, transcript string) (string, error) { return "", nil }
+	streamHandler := scriptedStreamingHandler("This is a long sentence with many audio chunks. ")
+
+	sm, engine, bus := newTestSessionManager(t, batchHandler, tts, WithStreamingHandler(streamHandler))
+	engine.playbackStreamErr = errors.New("device busy")
+
+	started := subscribeOnce(bus, EventSessionStarted)
+	failed := subscribeOnce(bus, EventSessionFailed)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "hello", "final": true},
+	})
+
+	event := waitForEvent(t, failed, "EventSessionFailed")
+	if reason, _ := event.Payload["reason"].(string); reason != "device busy" {
+		t.Errorf("failure reason = %q, want %q", reason, "device busy")
 	}
 }
 

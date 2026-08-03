@@ -231,6 +231,28 @@ func (e *AudioEngine) readCaptureLoop(stdout io.Reader, captureCh chan<- []byte)
 	}
 }
 
+// startPlaybackProcess starts the one-shot Python playback subprocess both
+// Playback and PlaybackStream use, returning it already running with its
+// stdin pipe ready to write to. ctx is passed straight to
+// exec.CommandContext, so a caller with no cancellation of its own (Playback)
+// passes context.Background(), behaving identically to plain exec.Command
+// since it's never done. Caller must have already verified the engine is
+// running.
+func startPlaybackProcess(ctx context.Context, pythonPath, scriptPath string, sampleRate int) (*exec.Cmd, io.WriteCloser, error) {
+	cmd := exec.CommandContext(ctx, pythonPath, scriptPath, "playback",
+		fmt.Sprintf("--sample-rate=%d", sampleRate),
+	)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("voice: create stdin pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, fmt.Errorf("voice: start playback: %w", err)
+	}
+	return cmd, stdin, nil
+}
+
 // Playback implements core.VoiceEngine: it plays raw PCM audio (mono, int16
 // LE) at sampleRate via a one-shot Python playback subprocess. sampleRate is
 // the caller's to specify (see the core.VoiceEngine.Playback doc comment) -
@@ -251,17 +273,9 @@ func (e *AudioEngine) Playback(audio []byte, sampleRate int) error {
 		return nil
 	}
 
-	cmd := exec.Command(pythonPath, scriptPath, "playback",
-		fmt.Sprintf("--sample-rate=%d", sampleRate),
-	)
-
-	stdin, err := cmd.StdinPipe()
+	cmd, stdin, err := startPlaybackProcess(context.Background(), pythonPath, scriptPath, sampleRate)
 	if err != nil {
-		return fmt.Errorf("voice: create stdin pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("voice: start playback: %w", err)
+		return err
 	}
 
 	if _, err := stdin.Write(audio); err != nil {
@@ -279,9 +293,15 @@ func (e *AudioEngine) Playback(audio []byte, sampleRate int) error {
 // Python playback subprocess Playback uses, but forwarding each chunk to its
 // stdin as soon as it is received instead of requiring the entire buffer up
 // front (SPEC-0061's "streaming speech output" requirement). Returns once
-// audioCh is closed and the subprocess exits, or immediately once ctx is
-// cancelled (the subprocess is killed rather than left to finish playing
-// whatever was already written to it).
+// audioCh is closed and the subprocess exits, or once ctx is cancelled.
+// Uses exec.CommandContext (matching whisper_provider.go/wake_word.go's own
+// ctx-cancel-kills-subprocess convention in this package) rather than a
+// manual select-and-Kill: the runtime's own context watcher kills the
+// process as soon as ctx is done regardless of what this goroutine is
+// currently doing, which matters because a chunk write to stdin
+// (stdin.Write below) is a plain blocking call a select case can't
+// preempt - if the subprocess were merely hung rather than exited, only an
+// externally-triggered kill (not our own select loop) can unblock it.
 func (e *AudioEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
 	e.mu.Lock()
 	if !e.running {
@@ -292,17 +312,9 @@ func (e *AudioEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte,
 	scriptPath := e.scriptPath
 	e.mu.Unlock()
 
-	cmd := exec.Command(pythonPath, scriptPath, "playback",
-		fmt.Sprintf("--sample-rate=%d", sampleRate),
-	)
-
-	stdin, err := cmd.StdinPipe()
+	cmd, stdin, err := startPlaybackProcess(ctx, pythonPath, scriptPath, sampleRate)
 	if err != nil {
-		return fmt.Errorf("voice: create stdin pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("voice: start playback: %w", err)
+		return err
 	}
 
 	for {
@@ -318,11 +330,13 @@ func (e *AudioEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte,
 			if _, err := stdin.Write(chunk); err != nil {
 				stdin.Close()
 				cmd.Wait()
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return err
 			}
 		case <-ctx.Done():
 			stdin.Close()
-			cmd.Process.Kill()
 			cmd.Wait()
 			return ctx.Err()
 		}

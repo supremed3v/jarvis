@@ -151,8 +151,68 @@ off master:**
   every touched file - confirmed via `gofmt -d` to be the known repo-wide
   CRLF-only false positive (documented since SPEC-0008/0027/0053/0058/0059),
   not a real formatting issue in the new code.
-- Not yet committed - holding per standing instruction to ask before any
-  commit/merge/push under `/feature`.
+- Committed to `feature/voice-streaming-pipeline` (`ad290fb`).
+
+**Review (2026-08-03, `/feature complete`'s own initiated `/code-review medium`
+pass, before merging):** 8-angle review found a real, CONFIRMED deadlock:
+`speakSentence` could hang forever if `PlaybackStream` returned (e.g. a
+stdin write failure) while `tts.StreamSynthesize`'s producer goroutine was
+still trying to send more than `streamAudioBufferSize` (8) buffered chunks -
+nothing cancelled `ctx` until `speakSentence` returned, which couldn't
+happen until that same blocked goroutine unblocked (circular). A second
+CONFIRMED issue: `PlaybackStream`'s `stdin.Write` was a plain blocking call
+a `select` couldn't preempt, so a hung (not exited) subprocess could ignore
+`ctx` cancellation entirely, contradicting the method's own doc comment.
+
+Fixed:
+- `speakSentence` now derives a per-sentence child context and cancels it
+  immediately after `PlaybackStream` returns (success or failure), before
+  waiting on `synthDone` - breaking the deadlock unconditionally, not
+  relying on the outer session-level cancellation chain.
+- Fixing that surfaced a related precedence bug the deadlock fix's own
+  regression test caught: cancelling to unblock the producer makes
+  `StreamSynthesize` return `context.Canceled`, which was masking the real
+  `playbackErr` (e.g. "device busy"). `speakSentence` now prefers
+  `playbackErr` over `synthErr` when both are non-nil.
+- `PlaybackStream` switched from plain `exec.Command` + manual
+  `select`/`Kill()` to `exec.CommandContext(ctx, ...)`, matching the
+  established convention in this same package
+  (`whisper_provider.go`/`wake_word.go`) - the runtime's own context
+  watcher now kills the subprocess independent of whatever this goroutine
+  is doing, fixing the blocking-write gap too.
+- `Playback` and `PlaybackStream` now share a `startPlaybackProcess`
+  helper instead of duplicating the subprocess-construction boilerplate
+  (a 3x-corroborated cleanup finding from the review).
+- New regression test:
+  `TestSessionManager_StreamingHandler_PlaybackFailureDoesNotDeadlock`
+  (fails via `waitForEvent`'s own 2s timeout if the deadlock ever
+  regresses, rather than hanging the suite).
+
+Two PLAUSIBLE (not CONFIRMED) findings left as documented, not-yet-fixed
+limitations, since neither has a concrete reproduction without a real
+`StreamingRequestHandler` (still out of scope per the dependency-order
+decision above):
+- `sentenceBoundary` treats a bare `\n` as a sentence end, which could
+  split a real LLM's markdown-formatted streaming output mid-clause.
+- `processRequestStreaming`'s `speakErr`-over-`handlerErr` precedence
+  (a different, higher-level precedence than the `speakSentence` one fixed
+  above) could in theory report a less-useful "context canceled" reason if
+  `speakErr` were ever just a cancellation side effect unrelated to its own
+  real cause - not currently reachable, since nothing external cancels
+  `processRequestStreaming`'s context today, but worth another look if that
+  changes.
+
+Also left as a known, undone architectural gap (not a bug): `speakSentence`
+spawns a brand-new playback subprocess per sentence rather than reusing one
+long-lived subprocess across a multi-sentence response - partially offsets
+this spec's own latency goal, flagged by 2 independent review angles, but
+fixing it means widening `core.VoiceEngine`'s contract further (e.g. an
+explicit playback-session lifecycle) - a bigger design decision than this
+review pass, worth raising with the user as a deliberate follow-up rather
+than folding into this fix pass.
+
+Re-verified after fixes: `scripts/go_all.ps1 all` (build+vet+test) clean
+across all 5 workspace modules, including the new deadlock regression test.
 
 ## History
 
@@ -171,3 +231,15 @@ off master:**
   per the dependency-order decision above - no real agent wiring.
   `go_all.ps1 build|vet|test` clean across all 5 modules. Uncommitted,
   pending user review.
+- 2026-08-03: CLAUDE.md's stale project-status claims (21/182,
+  "next is SPEC-0022") corrected on master (`88e7271`), discovered while
+  answering "how can we exercise SPEC-0022" - it, and everything through
+  SPEC-0060, was already `Completed`. SPEC-0061 work committed to
+  `feature/voice-streaming-pipeline` (`ad290fb`).
+- 2026-08-03 `/feature complete` (in progress): ran a `/code-review medium`
+  pass before merging (repo precedent: every prior spec's tracker entry
+  describes a review before being marked Completed). Found and fixed a
+  real deadlock plus a related error-masking bug and a ctx-cancellation
+  gap - see the Notes section above for full detail. Re-verified clean.
+  Fix commit pending; merge to master, tracker update, and
+  FEATURE_INDEX.md regeneration not yet done.

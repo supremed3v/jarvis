@@ -512,19 +512,45 @@ func (sm *SessionManager) speakSentences(ctx context.Context, session *Session, 
 // tts.StreamSynthesize's output directly into engine.PlaybackStream (both
 // running concurrently) so playback of the start of a sentence can begin
 // before the rest of it has finished synthesizing.
+//
+// It derives its own child context (sentenceCtx) rather than using ctx
+// directly, and cancels it the moment PlaybackStream returns, before
+// waiting on synthDone - not after. Without that, a PlaybackStream failure
+// (e.g. a broken pipe) stops it from draining audioCh while
+// tts.StreamSynthesize's goroutine may still be blocked trying to send more
+// buffered chunks to it; that goroutine's only way out is its own ctx
+// being done, but nothing would cancel ctx until speakSentence returns -
+// which can't happen until that same goroutine unblocks. Cancelling
+// sentenceCtx immediately after PlaybackStream returns breaks that cycle
+// unconditionally, independent of whatever the caller's ctx is doing.
+//
+// playbackErr, when non-nil, is reported over synthErr: cancelling
+// sentenceCtx to unblock a still-sending producer (the case above) makes
+// StreamSynthesize's own send fail with sentenceCtx's cancellation, so
+// whenever PlaybackStream genuinely failed, synthErr is usually just that
+// cancellation surfacing, not an independent root cause. When
+// PlaybackStream succeeds (playbackErr == nil), StreamSynthesize has
+// already fully finished sending before PlaybackStream ever sees audioCh
+// close, so synthErr at that point reflects a real synthesis outcome, not a
+// cancellation side effect.
 func (sm *SessionManager) speakSentence(ctx context.Context, sentence string) error {
+	sentenceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	audioCh := make(chan []byte, streamAudioBufferSize)
 	synthDone := make(chan error, 1)
 	go func() {
 		defer close(audioCh)
-		synthDone <- sm.tts.StreamSynthesize(ctx, sentence, core.VoiceOptions{}, audioCh)
+		synthDone <- sm.tts.StreamSynthesize(sentenceCtx, sentence, core.VoiceOptions{}, audioCh)
 	}()
 
-	playbackErr := sm.engine.PlaybackStream(ctx, audioCh, sm.cfg.TTSSampleRate)
-	if synthErr := <-synthDone; synthErr != nil {
-		return synthErr
+	playbackErr := sm.engine.PlaybackStream(sentenceCtx, audioCh, sm.cfg.TTSSampleRate)
+	cancel()
+	synthErr := <-synthDone
+	if playbackErr != nil {
+		return playbackErr
 	}
-	return playbackErr
+	return synthErr
 }
 
 // sentenceBoundary reports whether b ends a sentence a streamed response
