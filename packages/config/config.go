@@ -79,10 +79,18 @@ type ToolPermissions struct {
 	BrowserEnabled    bool `json:"browserEnabled"`
 }
 
-// VoiceConfig holds voice subsystem settings (SPEC-0053..0061).
+// VoiceConfig holds voice subsystem settings (SPEC-0053..0061). STTModel,
+// STTLanguage, and STTDevice are SPEC-0057's "Model size"/"Language
+// settings"/"Device selection" configuration surface for the Whisper
+// STTProvider: STTModel is a faster-whisper model size or path (e.g.
+// "base.en", "small", "large-v3"), STTLanguage is an ISO-639-1 code such as
+// "en" or "" to let Whisper auto-detect the spoken language, and STTDevice
+// selects the inference device ("cpu" or "cuda").
 type VoiceConfig struct {
 	WakeWordModelPath string `json:"wakeWordModelPath"`
 	STTModel          string `json:"sttModel"`
+	STTLanguage       string `json:"sttLanguage"`
+	STTDevice         string `json:"sttDevice"`
 	TTSModel          string `json:"ttsModel"`
 	AudioDevice       string `json:"audioDevice"`
 	SampleRate        int    `json:"sampleRate"`
@@ -126,6 +134,8 @@ func Defaults() Config {
 		Voice: VoiceConfig{
 			WakeWordModelPath: "models/hey_jarvis.onnx",
 			STTModel:          "base.en",
+			STTLanguage:       "en",
+			STTDevice:         "cpu",
 			TTSModel:          "en_US-amy-medium",
 			AudioDevice:       "default",
 			SampleRate:        16000,

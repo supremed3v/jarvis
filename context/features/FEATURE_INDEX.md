@@ -970,7 +970,7 @@ SPEC-0057-whisper-integration.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
