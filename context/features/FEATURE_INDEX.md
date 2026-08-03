@@ -800,7 +800,7 @@ SPEC-0047-tool-permission-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
