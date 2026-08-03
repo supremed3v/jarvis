@@ -885,7 +885,7 @@ SPEC-0052-git-tool.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
