@@ -817,7 +817,7 @@ SPEC-0048-tool-approval-workflow.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
