@@ -749,7 +749,7 @@ SPEC-0044-tool-manifest-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
