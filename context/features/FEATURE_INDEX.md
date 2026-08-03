@@ -868,7 +868,7 @@ SPEC-0051-browser-automation-tool.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
