@@ -10,8 +10,10 @@ framing is needed there).
 Usage:
     audio_engine.py capture --sample-rate=16000 --device=default
     audio_engine.py playback --sample-rate=16000
+    audio_engine.py list-devices
 """
 import argparse
+import json
 import struct
 import sys
 
@@ -68,17 +70,41 @@ def playback(sample_rate: int) -> None:
         stream.write(data)
 
 
+def list_devices() -> None:
+    """Print every audio device sounddevice/PortAudio can see as a single
+    JSON array on stdout (name/isDefault/maxInputChannels/maxOutputChannels),
+    matching services/core/voice/audio_engine.go's AudioDevice shape."""
+    devices = sd.query_devices()
+    try:
+        default_input = sd.default.device[0]
+    except Exception:
+        default_input = -1
+
+    result = [
+        {
+            "name": d["name"],
+            "isDefault": idx == default_input,
+            "maxInputChannels": d["max_input_channels"],
+            "maxOutputChannels": d["max_output_channels"],
+        }
+        for idx, d in enumerate(devices)
+    ]
+    print(json.dumps(result))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["capture", "playback"])
+    parser.add_argument("mode", choices=["capture", "playback", "list-devices"])
     parser.add_argument("--sample-rate", type=int, default=16000)
     parser.add_argument("--device", type=str, default="default")
     args = parser.parse_args()
 
     if args.mode == "capture":
         capture(args.sample_rate, args.device)
-    else:
+    elif args.mode == "playback":
         playback(args.sample_rate)
+    else:
+        list_devices()
 
 
 if __name__ == "__main__":

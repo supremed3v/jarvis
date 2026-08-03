@@ -15,7 +15,19 @@ type VoiceEngine interface {
 	Initialize(cfg *cfgpkg.VoiceConfig, log *logger.Logger) error
 	Capture() (<-chan []byte, error)
 	Playback(audio []byte) error
+	// ListDevices returns the audio input/output devices available on the
+	// host (SPEC-0053/SPEC-0054's device discovery requirement).
+	ListDevices() ([]AudioDevice, error)
 	Shutdown() error
+}
+
+// AudioDevice describes one audio device discovered by VoiceEngine.ListDevices
+// (SPEC-0053/SPEC-0054).
+type AudioDevice struct {
+	Name              string `json:"name"`
+	IsDefault         bool   `json:"isDefault"`
+	MaxInputChannels  int    `json:"maxInputChannels"`
+	MaxOutputChannels int    `json:"maxOutputChannels"`
 }
 
 // WakeWordDetector detects wake word activations (SPEC-0055). Start takes
