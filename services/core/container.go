@@ -14,7 +14,15 @@ import (
 type VoiceEngine interface {
 	Initialize(cfg *cfgpkg.VoiceConfig, log *logger.Logger) error
 	Capture() (<-chan []byte, error)
-	Playback(audio []byte) error
+	// Playback plays audio (mono, int16 LE) at sampleRate. sampleRate is
+	// explicit, rather than implicitly reusing cfg.SampleRate, because
+	// audio a caller hands to Playback need not have been captured at the
+	// engine's own configured rate - e.g. SPEC-0060's SessionManager plays
+	// back TTSProvider-synthesized speech, which is sampled at whatever
+	// rate the configured voice model actually synthesizes at
+	// (VoiceConfig.TTSSampleRate), not VoiceConfig.SampleRate's
+	// capture-oriented default.
+	Playback(audio []byte, sampleRate int) error
 	// ListDevices returns the audio input/output devices available on the
 	// host (SPEC-0053/SPEC-0054's device discovery requirement).
 	ListDevices() ([]AudioDevice, error)
@@ -72,6 +80,14 @@ type FileInfo struct {
 	ModTime int64
 }
 
+// VoiceSessionManager manages a complete voice interaction session -
+// sequencing wake word detection through capture, transcription, agent
+// communication, and a spoken response (SPEC-0060).
+type VoiceSessionManager interface {
+	Start() error
+	Stop() error
+}
+
 // WSBridge handles WebSocket communication with the desktop app (SPEC-0065).
 type WSBridge interface {
 	Start(addr string) error
@@ -113,13 +129,14 @@ type Container struct {
 	MemoryRetriever            *MemoryRetriever
 	ConsolidationEngine        *ConsolidationEngine
 
-	VoiceEngine      VoiceEngine
-	WakeWordDetector WakeWordDetector
-	STTProvider      STTProvider
-	TTSProvider      TTSProvider
-	TerminalTool     TerminalTool
-	FilesystemTool   FilesystemTool
-	WSBridge         WSBridge
+	VoiceEngine         VoiceEngine
+	WakeWordDetector    WakeWordDetector
+	STTProvider         STTProvider
+	TTSProvider         TTSProvider
+	VoiceSessionManager VoiceSessionManager
+	TerminalTool        TerminalTool
+	FilesystemTool      FilesystemTool
+	WSBridge            WSBridge
 }
 
 // ContainerOption configures a Container created by NewContainer.
@@ -220,6 +237,11 @@ func WithSTTProvider(s STTProvider) ContainerOption {
 // WithTTSProvider sets the Container's TTS Provider slot.
 func WithTTSProvider(t TTSProvider) ContainerOption {
 	return func(c *Container) { c.TTSProvider = t }
+}
+
+// WithVoiceSessionManager sets the Container's Voice Session Manager slot.
+func WithVoiceSessionManager(m VoiceSessionManager) ContainerOption {
+	return func(c *Container) { c.VoiceSessionManager = m }
 }
 
 // WithTerminalTool sets the Container's Terminal Tool slot.

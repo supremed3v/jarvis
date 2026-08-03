@@ -265,6 +265,26 @@ func TestLoad_VoiceSTTEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoad_VoiceTTSSampleRateEnvOverride(t *testing.T) {
+	t.Setenv("JARVIS_VOICE_TTS_SAMPLE_RATE", "24000")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") returned error: %v", err)
+	}
+	if cfg.Voice.TTSSampleRate != 24000 {
+		t.Errorf("Voice.TTSSampleRate = %d, want %d", cfg.Voice.TTSSampleRate, 24000)
+	}
+}
+
+func TestLoad_InvalidVoiceTTSSampleRateFailsSafely(t *testing.T) {
+	t.Setenv("JARVIS_VOICE_TTS_SAMPLE_RATE", "not-a-number")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("Load(\"\") error = nil, want an error for an invalid JARVIS_VOICE_TTS_SAMPLE_RATE")
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")

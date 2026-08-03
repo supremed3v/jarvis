@@ -95,7 +95,14 @@ type ToolPermissions struct {
 // the repo (see .gitignore's "models/" entry): download the "high" quality
 // en_GB Jarvis voice's jarvis-high.onnx/.onnx.json from
 // https://huggingface.co/jgkawell/jarvis (en/en_GB/jarvis/high/) into
-// models/ to match this default.
+// models/ to match this default. TTSSampleRate (SPEC-0060) is the sample
+// rate TTSModel's voice actually synthesizes at (per its .onnx.json - the
+// default below, 22050, matches the "high" quality jarvis-high voice) so
+// VoiceEngine.Playback can play synthesized speech back at its real rate,
+// distinct from SampleRate (16000), which is capture/microphone-oriented
+// and would otherwise distort synthesized speech's pitch/speed if reused
+// for playback of TTS output.
+
 type VoiceConfig struct {
 	WakeWordModelPath string `json:"wakeWordModelPath"`
 	STTModel          string `json:"sttModel"`
@@ -104,6 +111,7 @@ type VoiceConfig struct {
 	TTSModel          string `json:"ttsModel"`
 	AudioDevice       string `json:"audioDevice"`
 	SampleRate        int    `json:"sampleRate"`
+	TTSSampleRate     int    `json:"ttsSampleRate"`
 	PythonPath        string `json:"pythonPath"`
 	PiperBinary       string `json:"piperBinary"`
 }
@@ -149,6 +157,7 @@ func Defaults() Config {
 			TTSModel:          "models/jarvis-high",
 			AudioDevice:       "default",
 			SampleRate:        16000,
+			TTSSampleRate:     22050,
 			PythonPath:        "python",
 			PiperBinary:       "piper",
 		},

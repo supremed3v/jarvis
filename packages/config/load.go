@@ -90,6 +90,13 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 		cfg.Voice.SampleRate = rate
 	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_TTS_SAMPLE_RATE"); ok {
+		rate, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: invalid JARVIS_VOICE_TTS_SAMPLE_RATE %q: %w", v, err)
+		}
+		cfg.Voice.TTSSampleRate = rate
+	}
 	if v, ok := os.LookupEnv("JARVIS_VOICE_PYTHON_PATH"); ok {
 		cfg.Voice.PythonPath = v
 	}
