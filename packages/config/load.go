@@ -71,6 +71,12 @@ func applyEnvOverrides(cfg *Config) error {
 	if v, ok := os.LookupEnv("JARVIS_VOICE_STT_MODEL"); ok {
 		cfg.Voice.STTModel = v
 	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_STT_LANGUAGE"); ok {
+		cfg.Voice.STTLanguage = v
+	}
+	if v, ok := os.LookupEnv("JARVIS_VOICE_STT_DEVICE"); ok {
+		cfg.Voice.STTDevice = v
+	}
 	if v, ok := os.LookupEnv("JARVIS_VOICE_TTS_MODEL"); ok {
 		cfg.Voice.TTSModel = v
 	}

@@ -234,6 +234,37 @@ func TestLoad_AgentModelOverrideAppliesFromFile(t *testing.T) {
 	}
 }
 
+func TestLoad_VoiceDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") returned error: %v", err)
+	}
+	want := Defaults().Voice
+	if cfg.Voice != want {
+		t.Errorf("Voice = %+v, want %+v", cfg.Voice, want)
+	}
+}
+
+func TestLoad_VoiceSTTEnvOverrides(t *testing.T) {
+	t.Setenv("JARVIS_VOICE_STT_MODEL", "small")
+	t.Setenv("JARVIS_VOICE_STT_LANGUAGE", "fr")
+	t.Setenv("JARVIS_VOICE_STT_DEVICE", "cuda")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") returned error: %v", err)
+	}
+	if cfg.Voice.STTModel != "small" {
+		t.Errorf("Voice.STTModel = %q, want %q", cfg.Voice.STTModel, "small")
+	}
+	if cfg.Voice.STTLanguage != "fr" {
+		t.Errorf("Voice.STTLanguage = %q, want %q", cfg.Voice.STTLanguage, "fr")
+	}
+	if cfg.Voice.STTDevice != "cuda" {
+		t.Errorf("Voice.STTDevice = %q, want %q", cfg.Voice.STTDevice, "cuda")
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
