@@ -1038,7 +1038,7 @@ SPEC-0061-voice-streaming-pipeline.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
