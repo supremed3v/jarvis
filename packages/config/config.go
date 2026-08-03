@@ -85,7 +85,17 @@ type ToolPermissions struct {
 // STTProvider: STTModel is a faster-whisper model size or path (e.g.
 // "base.en", "small", "large-v3"), STTLanguage is an ISO-639-1 code such as
 // "en" or "" to let Whisper auto-detect the spoken language, and STTDevice
-// selects the inference device ("cpu" or "cuda").
+// selects the inference device ("cpu" or "cuda"). TTSModel (SPEC-0059) is a
+// Piper voice name, resolved by Piper itself against its --data-dir (default:
+// the process's working directory) with a ".onnx" suffix appended - e.g. the
+// default value below, "models/jarvis-high", resolves to
+// "models/jarvis-high.onnx" (+ ".onnx.json" alongside it) when the process
+// runs from the repo root, mirroring WakeWordModelPath's own repo-relative
+// "models/..." convention. Voice model files themselves are not committed to
+// the repo (see .gitignore's "models/" entry): download the "high" quality
+// en_GB Jarvis voice's jarvis-high.onnx/.onnx.json from
+// https://huggingface.co/jgkawell/jarvis (en/en_GB/jarvis/high/) into
+// models/ to match this default.
 type VoiceConfig struct {
 	WakeWordModelPath string `json:"wakeWordModelPath"`
 	STTModel          string `json:"sttModel"`
@@ -136,7 +146,7 @@ func Defaults() Config {
 			STTModel:          "base.en",
 			STTLanguage:       "en",
 			STTDevice:         "cpu",
-			TTSModel:          "en_US-amy-medium",
+			TTSModel:          "models/jarvis-high",
 			AudioDevice:       "default",
 			SampleRate:        16000,
 			PythonPath:        "python",
