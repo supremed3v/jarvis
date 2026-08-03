@@ -766,7 +766,7 @@ SPEC-0045-tool-registry.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
