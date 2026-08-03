@@ -1004,7 +1004,7 @@ SPEC-0059-piper-tts-integration.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
