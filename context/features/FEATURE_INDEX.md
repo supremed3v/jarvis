@@ -834,7 +834,7 @@ SPEC-0049-filesystem-tool.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
