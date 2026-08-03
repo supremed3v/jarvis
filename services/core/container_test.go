@@ -31,7 +31,7 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 		t.Fatal("TaskManager should be nil until its owning spec is implemented and wired")
 	}
 	if c.ToolRegistry != nil {
-		t.Fatal("ToolRegistry should be nil until SPEC-0045 is implemented and wired")
+		t.Fatal("ToolRegistry should be nil until wired via WithToolRegistry")
 	}
 	if c.AgentRegistry != nil {
 		t.Fatal("AgentRegistry should be nil until wired via WithAgentRegistry")
@@ -71,7 +71,7 @@ func TestNewContainer_UnwiredSlotsDefaultToNil(t *testing.T) {
 func TestNewContainer_OptionsWireStubSlots(t *testing.T) {
 	eventBus := NewBus()
 	taskManager := struct{ name string }{name: "fake-task-manager"}
-	toolRegistry := struct{ name string }{name: "fake-tool-registry"}
+	toolRegistry := NewToolRegistry()
 	agentRegistry := NewRegistry()
 	provider := NewOllamaProvider()
 	router := NewModelRouter(cfgpkg.ModelConfig{}, provider, logger.New("test"), nil)

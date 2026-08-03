@@ -83,20 +83,16 @@ type WSBridge interface {
 // (SPEC-0011..0017). Not yet implemented.
 type TaskManager interface{}
 
-// ToolRegistry is a placeholder slot for the SPEC-0045 Tool Registry.
-// Not yet implemented.
-type ToolRegistry interface{}
-
 // Container holds the shared services a Core Runtime component may depend
-// on. Config, Logger, EventBus, AgentRegistry, Provider, Router,
-// StreamHandler, PromptRegistry, WindowManager, BudgetManager, Memory,
-// EmbeddingPipeline, KnowledgeIngestionPipeline, MemoryRetriever, and
+// on. Config, Logger, EventBus, ToolRegistry, AgentRegistry, Provider,
+// Router, StreamHandler, PromptRegistry, WindowManager, BudgetManager,
+// Memory, EmbeddingPipeline, KnowledgeIngestionPipeline, MemoryRetriever, and
 // ConsolidationEngine are wired to their real SPEC-0003, SPEC-0005,
 // SPEC-0009, SPEC-0020, SPEC-0026/0027, SPEC-0029, SPEC-0030, SPEC-0031,
-// SPEC-0032, SPEC-0033, SPEC-0034/0035, SPEC-0039, SPEC-0040, SPEC-0041, and
-// SPEC-0042 implementations; the remaining slots are typed placeholders
-// until their owning specs are implemented. Every slot stays nil unless
-// supplied via options.
+// SPEC-0032, SPEC-0033, SPEC-0034/0035, SPEC-0039, SPEC-0040, SPEC-0041,
+// SPEC-0042, and SPEC-0045 implementations; the remaining slots are typed
+// placeholders until their owning specs are implemented. Every slot stays
+// nil unless supplied via options.
 type Container struct {
 	Config *cfgpkg.Config
 	Logger *logger.Logger
