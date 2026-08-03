@@ -73,6 +73,41 @@ type Session struct {
 // produced the response. RequestHandler must respect ctx cancellation.
 type RequestHandler func(ctx context.Context, transcript string) (string, error)
 
+// ResponseChunk is one incremental piece of a session's agent response,
+// delivered to the callback StreamingRequestHandler invokes - the
+// streaming-response counterpart of core.StreamChunk, whose Text/Done shape
+// it mirrors. Done marks the final chunk; it may carry empty Text if the
+// handler has nothing left to flush.
+type ResponseChunk struct {
+	Text string
+	Done bool
+}
+
+// StreamingRequestHandler is RequestHandler's streaming counterpart
+// (SPEC-0061's "streaming responses" requirement): instead of returning the
+// complete response text in one call, it invokes onChunk for each
+// incremental piece as it becomes available - e.g. a closure over
+// core.Provider.Stream or core.StreamHandler.Stream - so SessionManager can
+// begin synthesizing/speaking a response before the agent has finished
+// producing all of it. StreamingRequestHandler must respect ctx
+// cancellation, must invoke onChunk with a final Done chunk once the
+// response is complete, and must return promptly if onChunk returns an
+// error.
+type StreamingRequestHandler func(ctx context.Context, transcript string, onChunk func(ResponseChunk) error) error
+
+// sentenceBufferSize bounds how many complete sentences processRequestStreaming
+// may have queued for speaking (via sentenceCh) ahead of what speakSentences
+// has actually spoken. Buffered rather than synchronous so the streaming
+// handler can keep producing the next sentence's text while the current one
+// is still being synthesized/played - the pipelining that gives SPEC-0061's
+// streaming path its latency advantage over SPEC-0060's batch path.
+const sentenceBufferSize = 4
+
+// streamAudioBufferSize bounds how many PCM chunks speakSentence may have
+// buffered from TTSProvider.StreamSynthesize ahead of what
+// core.VoiceEngine.PlaybackStream has actually played.
+const streamAudioBufferSize = 8
+
 // SessionManager implements SPEC-0060: it owns a Microphone's audio
 // lifecycle (SPEC-0053/0054, including its STT state per SPEC-0056) and
 // gates the EventWakeWordDetected/EventVoiceTranscript events it publishes
@@ -80,13 +115,14 @@ type RequestHandler func(ctx context.Context, transcript string) (string, error)
 // communication) and a spoken TTSProvider response. SessionManager is safe
 // for concurrent use.
 type SessionManager struct {
-	mic     *Microphone
-	engine  core.VoiceEngine
-	tts     core.TTSProvider
-	cfg     *cfgpkg.VoiceConfig
-	handler RequestHandler
-	bus     core.EventBus
-	log     *logger.Logger
+	mic              *Microphone
+	engine           core.VoiceEngine
+	tts              core.TTSProvider
+	cfg              *cfgpkg.VoiceConfig
+	handler          RequestHandler
+	streamingHandler StreamingRequestHandler
+	bus              core.EventBus
+	log              *logger.Logger
 
 	sessionTimeout time.Duration
 
@@ -110,6 +146,18 @@ type SessionManagerOption func(*SessionManager)
 // defaultSessionTimeout.
 func WithSessionTimeout(d time.Duration) SessionManagerOption {
 	return func(sm *SessionManager) { sm.sessionTimeout = d }
+}
+
+// WithStreamingHandler configures a StreamingRequestHandler
+// (SPEC-0061). When set, processRequest uses it instead of the
+// constructor's required RequestHandler: response text is synthesized and
+// spoken sentence-by-sentence as it streams in (processRequestStreaming),
+// rather than only after the complete response text is available
+// (SPEC-0060's batch behavior, which NewSessionManager's handler parameter
+// still exists to support when this option isn't used). Optional; unset by
+// default.
+func WithStreamingHandler(h StreamingRequestHandler) SessionManagerOption {
+	return func(sm *SessionManager) { sm.streamingHandler = h }
 }
 
 // NewSessionManager creates a ready-to-use SessionManager. mic, engine, tts,
@@ -317,11 +365,19 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 }
 
 // processRequest carries out SPEC-0060's "Process Request", "Generate
-// Response", and "Speak" stages for session: RequestHandler produces the
-// response text (agent communication), tts.Synthesize converts it to audio,
-// and engine.Playback speaks it. Any failure ends the session as failed
-// rather than continuing to the next stage.
+// Response", and "Speak" stages for session. If a StreamingRequestHandler
+// is configured (WithStreamingHandler), it drives SPEC-0061's streaming
+// path via processRequestStreaming; otherwise it falls back to SPEC-0060's
+// batch path: RequestHandler produces the complete response text (agent
+// communication), tts.Synthesize converts it to audio, and engine.Playback
+// speaks it. Either way, any failure ends the session as failed rather than
+// continuing to the next stage.
 func (sm *SessionManager) processRequest(session *Session, text string) {
+	if sm.streamingHandler != nil {
+		sm.processRequestStreaming(session, text)
+		return
+	}
+
 	ctx := context.Background()
 
 	response, err := sm.handler(ctx, text)
@@ -351,6 +407,160 @@ func (sm *SessionManager) processRequest(session *Session, text string) {
 	}
 
 	sm.finishSession(session, EventSessionCompleted, "")
+}
+
+// processRequestStreaming is processRequest's SPEC-0061 streaming path: it
+// runs streamingHandler, splitting its incrementally-delivered response text
+// into sentences (flushCompleteSentences) and handing each complete sentence
+// to speakSentences as soon as it's ready, so speaking the start of a
+// response can overlap with the handler still producing the rest of it -
+// unlike processRequest's batch path, which waits for the complete response
+// before synthesizing or speaking any of it.
+//
+// speakSentences runs concurrently, consuming sentenceCh; if it fails
+// partway through (a TTS or playback error), ctx is cancelled so
+// streamingHandler - and any pending, blocked send to sentenceCh in
+// onChunk - stops promptly instead of continuing to produce text nothing
+// will speak.
+func (sm *SessionManager) processRequestStreaming(session *Session, text string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sentenceCh := make(chan string, sentenceBufferSize)
+	speakDone := make(chan error, 1)
+	go func() {
+		err := sm.speakSentences(ctx, session, sentenceCh)
+		if err != nil {
+			cancel()
+		}
+		speakDone <- err
+	}()
+
+	var buf strings.Builder
+	handlerErr := sm.streamingHandler(ctx, text, func(chunk ResponseChunk) error {
+		buf.WriteString(chunk.Text)
+		for _, sentence := range flushCompleteSentences(&buf) {
+			if err := sendSentence(ctx, sentenceCh, sentence); err != nil {
+				return err
+			}
+		}
+		if chunk.Done {
+			if rest := strings.TrimSpace(buf.String()); rest != "" {
+				buf.Reset()
+				return sendSentence(ctx, sentenceCh, rest)
+			}
+			buf.Reset()
+		}
+		return nil
+	})
+	close(sentenceCh)
+
+	speakErr := <-speakDone
+
+	// speakErr, not handlerErr, is reported when both are non-nil: a
+	// speakSentences failure is what triggered cancel() above, so any
+	// resulting handlerErr is just that cancellation surfacing through
+	// streamingHandler, not the failure's root cause.
+	switch {
+	case speakErr != nil:
+		sm.log.Error("voice: streaming speech failed", map[string]any{"sessionId": session.ID, "error": speakErr.Error()})
+		sm.finishSession(session, EventSessionFailed, speakErr.Error())
+	case handlerErr != nil:
+		sm.log.Error("voice: streaming request handler failed", map[string]any{"sessionId": session.ID, "error": handlerErr.Error()})
+		sm.finishSession(session, EventSessionFailed, handlerErr.Error())
+	default:
+		sm.finishSession(session, EventSessionCompleted, "")
+	}
+}
+
+// sendSentence sends sentence on sentenceCh, returning ctx.Err() instead of
+// blocking forever if ctx is cancelled first (e.g. by speakSentences having
+// already failed).
+func sendSentence(ctx context.Context, sentenceCh chan<- string, sentence string) error {
+	select {
+	case sentenceCh <- sentence:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// speakSentences reads sentences from sentenceCh in the order
+// processRequestStreaming sends them and speaks each in turn via
+// speakSentence, returning the first error encountered (having stopped
+// consuming further sentences at that point - the caller is responsible for
+// unblocking any sentence it still has left to send, via ctx cancellation).
+func (sm *SessionManager) speakSentences(ctx context.Context, session *Session, sentenceCh <-chan string) error {
+	responding := false
+	for sentence := range sentenceCh {
+		if !responding {
+			sm.mu.Lock()
+			if sm.session == session {
+				session.State = SessionStateResponding
+			}
+			sm.mu.Unlock()
+			responding = true
+		}
+		if err := sm.speakSentence(ctx, sentence); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// speakSentence synthesizes and speaks one sentence, pipelining
+// tts.StreamSynthesize's output directly into engine.PlaybackStream (both
+// running concurrently) so playback of the start of a sentence can begin
+// before the rest of it has finished synthesizing.
+func (sm *SessionManager) speakSentence(ctx context.Context, sentence string) error {
+	audioCh := make(chan []byte, streamAudioBufferSize)
+	synthDone := make(chan error, 1)
+	go func() {
+		defer close(audioCh)
+		synthDone <- sm.tts.StreamSynthesize(ctx, sentence, core.VoiceOptions{}, audioCh)
+	}()
+
+	playbackErr := sm.engine.PlaybackStream(ctx, audioCh, sm.cfg.TTSSampleRate)
+	if synthErr := <-synthDone; synthErr != nil {
+		return synthErr
+	}
+	return playbackErr
+}
+
+// sentenceBoundary reports whether b ends a sentence a streamed response
+// should be split on for speaking (flushCompleteSentences), so playback of
+// one sentence can start as soon as it's complete rather than waiting for
+// the entire response.
+func sentenceBoundary(b byte) bool {
+	switch b {
+	case '.', '!', '?', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
+// flushCompleteSentences extracts every complete sentence currently in buf
+// (ending in a sentenceBoundary byte) and returns them in order, leaving any
+// trailing incomplete sentence in buf for a later chunk to complete.
+// Sentence-boundary bytes are all single-byte ASCII, so splitting on them
+// never lands in the middle of a multi-byte UTF-8 rune.
+func flushCompleteSentences(buf *strings.Builder) []string {
+	s := buf.String()
+	var sentences []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if !sentenceBoundary(s[i]) {
+			continue
+		}
+		if sentence := strings.TrimSpace(s[start : i+1]); sentence != "" {
+			sentences = append(sentences, sentence)
+		}
+		start = i + 1
+	}
+	buf.Reset()
+	buf.WriteString(s[start:])
+	return sentences
 }
 
 // finishSession ends session (SPEC-0060's "session cleanup" requirement):

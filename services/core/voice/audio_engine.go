@@ -6,6 +6,7 @@ package voice
 
 import (
 	"bufio"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -271,6 +272,61 @@ func (e *AudioEngine) Playback(audio []byte, sampleRate int) error {
 	stdin.Close()
 
 	return cmd.Wait()
+}
+
+// PlaybackStream implements core.VoiceEngine: it plays raw PCM audio (mono,
+// int16 LE) at sampleRate as it arrives on audioCh, via the same one-shot
+// Python playback subprocess Playback uses, but forwarding each chunk to its
+// stdin as soon as it is received instead of requiring the entire buffer up
+// front (SPEC-0061's "streaming speech output" requirement). Returns once
+// audioCh is closed and the subprocess exits, or immediately once ctx is
+// cancelled (the subprocess is killed rather than left to finish playing
+// whatever was already written to it).
+func (e *AudioEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+	e.mu.Lock()
+	if !e.running {
+		e.mu.Unlock()
+		return fmt.Errorf("voice: audio engine not initialized")
+	}
+	pythonPath := e.pythonPath
+	scriptPath := e.scriptPath
+	e.mu.Unlock()
+
+	cmd := exec.Command(pythonPath, scriptPath, "playback",
+		fmt.Sprintf("--sample-rate=%d", sampleRate),
+	)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("voice: create stdin pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("voice: start playback: %w", err)
+	}
+
+	for {
+		select {
+		case chunk, ok := <-audioCh:
+			if !ok {
+				stdin.Close()
+				return cmd.Wait()
+			}
+			if len(chunk) == 0 {
+				continue
+			}
+			if _, err := stdin.Write(chunk); err != nil {
+				stdin.Close()
+				cmd.Wait()
+				return err
+			}
+		case <-ctx.Done():
+			stdin.Close()
+			cmd.Process.Kill()
+			cmd.Wait()
+			return ctx.Err()
+		}
+	}
 }
 
 // Shutdown implements core.VoiceEngine: it stops any running capture

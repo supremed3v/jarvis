@@ -69,6 +69,22 @@ func (f *fakeVoiceEngine) Capture() (<-chan []byte, error) {
 
 func (f *fakeVoiceEngine) Playback(audio []byte, sampleRate int) error { return nil }
 
+// PlaybackStream drains audioCh (discarding chunks) until it's closed or ctx
+// is cancelled, mirroring what a real PlaybackStream implementation does
+// without needing a subprocess.
+func (f *fakeVoiceEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+	for {
+		select {
+		case _, ok := <-audioCh:
+			if !ok {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func (f *fakeVoiceEngine) ListDevices() ([]core.AudioDevice, error) { return nil, nil }
 
 func (f *fakeVoiceEngine) Shutdown() error { return nil }

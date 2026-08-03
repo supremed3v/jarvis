@@ -23,6 +23,17 @@ type VoiceEngine interface {
 	// (VoiceConfig.TTSSampleRate), not VoiceConfig.SampleRate's
 	// capture-oriented default.
 	Playback(audio []byte, sampleRate int) error
+	// PlaybackStream plays audio (mono, int16 LE) at sampleRate as it
+	// arrives on audioCh, starting playback as soon as the first chunk is
+	// available rather than waiting for a complete buffer like Playback
+	// does (SPEC-0061's "streaming speech output" requirement) - e.g. so a
+	// caller pipelining TTSProvider.StreamSynthesize's output can speak the
+	// start of a response while the rest is still being synthesized.
+	// PlaybackStream returns once audioCh is closed and everything written
+	// to it has finished playing, or as soon as ctx is cancelled (in which
+	// case in-progress playback is stopped rather than left to finish). The
+	// caller owns audioCh; PlaybackStream never closes it.
+	PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error
 	// ListDevices returns the audio input/output devices available on the
 	// host (SPEC-0053/SPEC-0054's device discovery requirement).
 	ListDevices() ([]AudioDevice, error)

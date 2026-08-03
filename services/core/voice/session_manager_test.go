@@ -8,6 +8,8 @@ package voice
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +38,31 @@ func (r *recordingVoiceEngine) Playback(audio []byte, sampleRate int) error {
 	return nil
 }
 
+// PlaybackStream records one played entry per call, concatenating every
+// chunk it reads from audioCh before audioCh closes - the streaming
+// equivalent of Playback's one-buffer-per-call recording, so streaming
+// tests can assert both how many "utterances" were spoken and what audio
+// each one carried using the same played/sampleRates fields and helpers as
+// the non-streaming tests.
+func (r *recordingVoiceEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+	var buf []byte
+	for {
+		select {
+		case chunk, ok := <-audioCh:
+			if !ok {
+				r.mu.Lock()
+				r.played = append(r.played, buf)
+				r.sampleRates = append(r.sampleRates, sampleRate)
+				r.mu.Unlock()
+				return nil
+			}
+			buf = append(buf, chunk...)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func (r *recordingVoiceEngine) playbackCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -52,13 +79,21 @@ func (r *recordingVoiceEngine) lastSampleRate() int {
 }
 
 // fakeTTSProvider is a minimal core.TTSProvider test double recording every
-// Synthesize call.
+// Synthesize/StreamSynthesize call. Synthesize and StreamSynthesize are
+// controlled independently (err vs. streamErr, texts vs. streamTexts) since
+// SessionManager's batch and streaming paths (SPEC-0060 and SPEC-0061
+// respectively) each use exactly one of the two methods, never both in the
+// same processRequest call.
 type fakeTTSProvider struct {
 	mu        sync.Mutex
 	texts     []string
 	audio     []byte
 	err       error
 	callCount int
+
+	streamTexts []string
+	streamAudio []byte
+	streamErr   error
 }
 
 func (f *fakeTTSProvider) Synthesize(ctx context.Context, text string, opts core.VoiceOptions) ([]byte, error) {
@@ -72,7 +107,29 @@ func (f *fakeTTSProvider) Synthesize(ctx context.Context, text string, opts core
 	return f.audio, nil
 }
 
+// StreamSynthesize records text, then - unless streamErr is set - writes
+// streamAudio (or a default derived from text, if streamAudio is unset) to
+// audioCh as a single chunk before returning, respecting ctx cancellation
+// while sending. The caller owns and closes audioCh, matching
+// core.TTSProvider.StreamSynthesize's real contract.
 func (f *fakeTTSProvider) StreamSynthesize(ctx context.Context, text string, opts core.VoiceOptions, audioCh chan<- []byte) error {
+	f.mu.Lock()
+	f.streamTexts = append(f.streamTexts, text)
+	streamErr := f.streamErr
+	audio := f.streamAudio
+	f.mu.Unlock()
+
+	if streamErr != nil {
+		return streamErr
+	}
+	if audio == nil {
+		audio = []byte("audio:" + text)
+	}
+	select {
+	case audioCh <- audio:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -80,6 +137,12 @@ func (f *fakeTTSProvider) synthesizeCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.callCount
+}
+
+func (f *fakeTTSProvider) streamSynthesizeTexts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.streamTexts...)
 }
 
 var _ core.TTSProvider = (*fakeTTSProvider)(nil)
@@ -365,6 +428,155 @@ func TestSessionManager_SessionTimesOutWaitingForSpeech(t *testing.T) {
 	}
 	if got := sm.CurrentSession(); got != nil {
 		t.Errorf("CurrentSession() = %+v, want nil after timeout", got)
+	}
+}
+
+// scriptedStreamingHandler returns a StreamingRequestHandler that delivers
+// text in the given fragments - simulating tokens/words arriving one at a
+// time, independent of where any sentence boundary falls within a single
+// fragment - followed by a final Done chunk.
+func scriptedStreamingHandler(fragments ...string) StreamingRequestHandler {
+	return func(ctx context.Context, transcript string, onChunk func(ResponseChunk) error) error {
+		for _, f := range fragments {
+			if err := onChunk(ResponseChunk{Text: f}); err != nil {
+				return err
+			}
+		}
+		return onChunk(ResponseChunk{Done: true})
+	}
+}
+
+func TestSessionManager_StreamingHandler_SpeaksSentencesAsTheyComplete(t *testing.T) {
+	tts := &fakeTTSProvider{}
+	batchHandlerCalled := false
+	batchHandler := func(ctx context.Context, transcript string) (string, error) {
+		batchHandlerCalled = true
+		return "", nil
+	}
+	streamHandler := scriptedStreamingHandler("Turning on ", "the lights. ", "Anything else? ")
+
+	sm, engine, bus := newTestSessionManager(t, batchHandler, tts, WithStreamingHandler(streamHandler))
+	started := subscribeOnce(bus, EventSessionStarted)
+	completed := subscribeOnce(bus, EventSessionCompleted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "turn on the lights", "final": true},
+	})
+
+	waitForEvent(t, completed, "EventSessionCompleted")
+
+	if batchHandlerCalled {
+		t.Error("batch RequestHandler was called despite a StreamingRequestHandler being configured")
+	}
+	wantSentences := []string{"Turning on the lights.", "Anything else?"}
+	if got := tts.streamSynthesizeTexts(); !reflect.DeepEqual(got, wantSentences) {
+		t.Errorf("tts.streamSynthesizeTexts() = %v, want %v", got, wantSentences)
+	}
+	if engine.playbackCount() != len(wantSentences) {
+		t.Errorf("engine.playbackCount() = %d, want %d (one PlaybackStream call per sentence, not one for the whole response)", engine.playbackCount(), len(wantSentences))
+	}
+	if got := sm.CurrentSession(); got != nil {
+		t.Errorf("CurrentSession() = %+v, want nil after completion", got)
+	}
+}
+
+func TestSessionManager_StreamingHandler_FailsOnSynthesisError(t *testing.T) {
+	tts := &fakeTTSProvider{streamErr: errors.New("piper exploded")}
+	batchHandler := func(ctx context.Context, transcript string) (string, error) { return "", nil }
+	streamHandler := scriptedStreamingHandler("Hello. ", "World. ")
+
+	sm, _, bus := newTestSessionManager(t, batchHandler, tts, WithStreamingHandler(streamHandler))
+	started := subscribeOnce(bus, EventSessionStarted)
+	failed := subscribeOnce(bus, EventSessionFailed)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "hello", "final": true},
+	})
+
+	event := waitForEvent(t, failed, "EventSessionFailed")
+	if reason, _ := event.Payload["reason"].(string); reason != "piper exploded" {
+		t.Errorf("failure reason = %q, want %q", reason, "piper exploded")
+	}
+	if got := sm.CurrentSession(); got != nil {
+		t.Errorf("CurrentSession() = %+v, want nil after failure", got)
+	}
+}
+
+func TestSessionManager_StreamingHandler_FailsWhenHandlerErrors(t *testing.T) {
+	tts := &fakeTTSProvider{}
+	batchHandler := func(ctx context.Context, transcript string) (string, error) { return "", nil }
+	streamHandler := func(ctx context.Context, transcript string, onChunk func(ResponseChunk) error) error {
+		return errors.New("agent exploded")
+	}
+
+	sm, _, bus := newTestSessionManager(t, batchHandler, tts, WithStreamingHandler(streamHandler))
+	started := subscribeOnce(bus, EventSessionStarted)
+	failed := subscribeOnce(bus, EventSessionFailed)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "do something", "final": true},
+	})
+
+	event := waitForEvent(t, failed, "EventSessionFailed")
+	if reason, _ := event.Payload["reason"].(string); reason != "agent exploded" {
+		t.Errorf("failure reason = %q, want %q", reason, "agent exploded")
+	}
+	if n := len(tts.streamSynthesizeTexts()); n != 0 {
+		t.Errorf("tts was invoked %d times despite the streaming handler failing before producing any text", n)
+	}
+}
+
+func TestFlushCompleteSentences(t *testing.T) {
+	var buf strings.Builder
+
+	buf.WriteString("Hello there. How are")
+	got := flushCompleteSentences(&buf)
+	want := []string{"Hello there."}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("flushCompleteSentences() = %v, want %v", got, want)
+	}
+	if remaining := buf.String(); remaining != " How are" {
+		t.Fatalf("buf after flush = %q, want %q", remaining, " How are")
+	}
+
+	buf.WriteString(" you? I'm great!\n")
+	got = flushCompleteSentences(&buf)
+	want = []string{"How are you?", "I'm great!"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("flushCompleteSentences() = %v, want %v", got, want)
+	}
+	if remaining := buf.String(); remaining != "" {
+		t.Fatalf("buf after flush = %q, want empty", remaining)
 	}
 }
 
