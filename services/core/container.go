@@ -40,12 +40,6 @@ type WakeWordDetector interface {
 	Stop() error
 }
 
-// STTProvider converts speech to text (SPEC-0057).
-type STTProvider interface {
-	Transcribe(ctx context.Context, audio []byte) (string, error)
-	StreamTranscribe(ctx context.Context, audioCh <-chan []byte, textCh chan<- string) error
-}
-
 // TTSProvider converts text to speech (SPEC-0059).
 type TTSProvider interface {
 	Synthesize(ctx context.Context, text string) ([]byte, error)

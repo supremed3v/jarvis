@@ -953,7 +953,7 @@ SPEC-0056-speech-to-text-provider.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

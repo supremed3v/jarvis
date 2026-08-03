@@ -94,8 +94,8 @@ func (m *Microphone) Start() error {
 	}
 
 	// Start STT streaming
-	textCh := make(chan string, 10)
-	if err := m.stt.StreamTranscribe(m.ctx, m.sttCh, textCh); err != nil {
+	resultCh := make(chan core.TranscriptionChunk, 10)
+	if err := m.stt.StreamTranscribe(m.ctx, m.sttCh, resultCh); err != nil {
 		return err
 	}
 
@@ -105,10 +105,14 @@ func (m *Microphone) Start() error {
 		defer m.wg.Done()
 		for {
 			select {
-			case text := <-textCh:
-				if text != "" {
-					m.log.Info("voice: transcript", map[string]any{"text": text})
-					m.publish(EventVoiceTranscript, map[string]any{"text": text})
+			case chunk := <-resultCh:
+				if chunk.Text != "" {
+					m.log.Info("voice: transcript", map[string]any{"text": chunk.Text, "confidence": chunk.Confidence})
+					m.publish(EventVoiceTranscript, map[string]any{
+						"text":       chunk.Text,
+						"confidence": chunk.Confidence,
+						"final":      chunk.Done,
+					})
 				}
 			case <-m.ctx.Done():
 				return
