@@ -5,9 +5,19 @@ package voice
 import (
 	"context"
 	"sync"
+	"time"
 
 	"jarvis-pa/packages/logger"
+	types "jarvis-pa/packages/shared-types"
 	"jarvis-pa/services/core"
+)
+
+// Event types Microphone publishes on its EventBus (SPEC-0055's "detection
+// events are emitted" testing criterion, plus the STT transcript equivalent
+// for SPEC-0054's "provide audio streams to STT" once transcribed).
+const (
+	EventWakeWordDetected types.EventType = "WAKE_WORD_DETECTED"
+	EventVoiceTranscript  types.EventType = "VOICE_TRANSCRIPT"
 )
 
 // Microphone captures audio and distributes to consumers.
@@ -15,6 +25,7 @@ type Microphone struct {
 	engine   core.VoiceEngine
 	wakeWord core.WakeWordDetector
 	stt      core.STTProvider
+	bus      core.EventBus
 	log      *logger.Logger
 
 	captureCh <-chan []byte
@@ -28,19 +39,35 @@ type Microphone struct {
 	mu      sync.Mutex
 }
 
-// NewMicrophone creates a new Microphone.
-func NewMicrophone(engine core.VoiceEngine, wakeWord core.WakeWordDetector, stt core.STTProvider, log *logger.Logger) *Microphone {
+// NewMicrophone creates a new Microphone. bus may be nil, in which case
+// Microphone still functions but publishes no events.
+func NewMicrophone(engine core.VoiceEngine, wakeWord core.WakeWordDetector, stt core.STTProvider, bus core.EventBus, log *logger.Logger) *Microphone {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Microphone{
 		engine:   engine,
 		wakeWord: wakeWord,
 		stt:      stt,
+		bus:      bus,
 		log:      log,
 		ctx:      ctx,
 		cancel:   cancel,
 		wakeCh:   make(chan []byte, 50),
 		sttCh:    make(chan []byte, 50),
 	}
+}
+
+// publish emits an Event of eventType on the Microphone's EventBus, if one
+// is configured.
+func (m *Microphone) publish(eventType types.EventType, payload map[string]any) {
+	if m.bus == nil {
+		return
+	}
+	m.bus.Publish(types.Event{
+		Type:      eventType,
+		Source:    "core.voice.microphone",
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	})
 }
 
 // Start begins audio capture and distribution.
@@ -61,7 +88,7 @@ func (m *Microphone) Start() error {
 	// Start wake word detector, fed by the distribution loop's wakeCh below.
 	if err := m.wakeWord.Start(m.ctx, m.wakeCh, func() {
 		m.log.Info("voice: wake word detected", nil)
-		// EventBus event would be emitted here in integration
+		m.publish(EventWakeWordDetected, nil)
 	}); err != nil {
 		return err
 	}
@@ -81,7 +108,7 @@ func (m *Microphone) Start() error {
 			case text := <-textCh:
 				if text != "" {
 					m.log.Info("voice: transcript", map[string]any{"text": text})
-					// EventBus event would be emitted here
+					m.publish(EventVoiceTranscript, map[string]any{"text": text})
 				}
 			case <-m.ctx.Done():
 				return
