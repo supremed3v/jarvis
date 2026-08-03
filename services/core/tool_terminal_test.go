@@ -16,12 +16,25 @@ import (
 // helper subprocess, so terminal Tool tests can exercise real process
 // execution (stdout/stderr capture, exit codes, hangs) without depending on
 // OS-specific executables like "echo" (a shell builtin, not a standalone
-// executable, on Windows).
+// executable, on Windows). It also owns the package's one BrowserEngine
+// (tool_browser_test.go), launched once for every browser Tool test in the
+// package rather than per test.
 func TestMain(m *testing.M) {
 	if os.Getenv("JARVIS_TERMINAL_TEST_HELPER") == "1" {
 		os.Exit(runTerminalTestHelper())
 	}
-	os.Exit(m.Run())
+
+	if err := setupSharedBrowserEngine(); err != nil {
+		fmt.Fprintln(os.Stderr, "tool_terminal_test: setupSharedBrowserEngine failed:", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+
+	if err := teardownSharedBrowserEngine(); err != nil {
+		fmt.Fprintln(os.Stderr, "tool_terminal_test: teardownSharedBrowserEngine failed:", err)
+	}
+	os.Exit(code)
 }
 
 // runTerminalTestHelper implements the terminal test helper's behavior,
