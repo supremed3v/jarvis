@@ -33,15 +33,15 @@ func requirePython(t *testing.T, pythonPath string) {
 // non-nil provider but don't exercise transcription itself.
 type mockSTTProvider struct{}
 
-func (m *mockSTTProvider) Transcribe(ctx context.Context, audio []byte) (string, error) {
-	return "", nil
+func (m *mockSTTProvider) Transcribe(ctx context.Context, audio []byte) (core.TranscriptionResult, error) {
+	return core.TranscriptionResult{}, nil
 }
 
-func (m *mockSTTProvider) StreamTranscribe(ctx context.Context, audioCh <-chan []byte, textCh chan<- string) error {
+func (m *mockSTTProvider) StreamTranscribe(ctx context.Context, audioCh <-chan []byte, resultCh chan<- core.TranscriptionChunk) error {
 	go func() {
 		for range audioCh {
 			select {
-			case textCh <- "":
+			case resultCh <- core.TranscriptionChunk{}:
 			case <-ctx.Done():
 				return
 			}
