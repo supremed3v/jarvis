@@ -987,7 +987,7 @@ SPEC-0058-text-to-speech-provider.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
