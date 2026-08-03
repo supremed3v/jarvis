@@ -783,7 +783,7 @@ SPEC-0046-tool-execution-engine.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
