@@ -40,12 +40,6 @@ type WakeWordDetector interface {
 	Stop() error
 }
 
-// TTSProvider converts text to speech (SPEC-0059).
-type TTSProvider interface {
-	Synthesize(ctx context.Context, text string) ([]byte, error)
-	StreamSynthesize(ctx context.Context, text string, audioCh chan<- []byte) error
-}
-
 // TerminalTool executes terminal commands and manages PTY sessions (SPEC-0050).
 type TerminalTool interface {
 	Execute(ctx context.Context, cmd string, args []string) (string, error)
