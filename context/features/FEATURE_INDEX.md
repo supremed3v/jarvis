@@ -800,7 +800,7 @@ SPEC-0047-tool-permission-system.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -817,7 +817,7 @@ SPEC-0048-tool-approval-workflow.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
