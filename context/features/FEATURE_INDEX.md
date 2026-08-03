@@ -851,7 +851,7 @@ SPEC-0050-terminal-tool.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
