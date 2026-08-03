@@ -1021,7 +1021,7 @@ SPEC-0060-voice-session-manager.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
