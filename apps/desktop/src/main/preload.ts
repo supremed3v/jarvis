@@ -11,6 +11,7 @@ import type {
   UserCommandResult,
 } from "../shared/ipc";
 import type { CommandResult, RuntimeEvent, StreamChunk } from "../shared/runtime";
+import type { Settings, SettingsPatch } from "../shared/settings";
 import type { VoiceUiSnapshot } from "../shared/voice";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
@@ -29,6 +30,9 @@ const CHANNEL = {
   toolApprovalRequested: "jarvis:tool:approval-requested",
   toolApprovalResponse: "jarvis:tool:approval-response",
   voiceEvent: "jarvis:voice:event",
+  settingsGet: "jarvis:settings:get",
+  settingsSave: "jarvis:settings:save",
+  settingsChanged: "jarvis:settings:changed",
 } as const;
 
 function invoke<T>(channel: string, payload?: unknown): Promise<IpcResult<T>> {
@@ -88,6 +92,14 @@ const bridge: JarvisBridge = {
   voice: {
     onEvent: (cb: (snapshot: VoiceUiSnapshot) => void): (() => void) =>
       subscribe<VoiceUiSnapshot>(CHANNEL.voiceEvent, cb),
+  },
+
+  settings: {
+    get: (): Promise<IpcResult<Settings>> => invoke<Settings>(CHANNEL.settingsGet),
+    save: (patch: SettingsPatch): Promise<IpcResult<Settings>> =>
+      invoke<Settings>(CHANNEL.settingsSave, patch),
+    onChanged: (cb: (settings: Settings) => void): (() => void) =>
+      subscribe<Settings>(CHANNEL.settingsChanged, cb),
   },
 };
 

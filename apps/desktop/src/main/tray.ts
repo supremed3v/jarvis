@@ -14,6 +14,7 @@ import {
 
 export interface TrayHandlers {
   open: () => void;
+  settings: () => void;
   voice: () => void;
   quit: () => void;
 }
@@ -35,6 +36,9 @@ export function createJarvisTray(handlers: TrayHandlers): JarvisTray {
     switch (id) {
       case "open":
         handlers.open();
+        break;
+      case "settings":
+        handlers.settings();
         break;
       case "voice":
         handlers.voice();

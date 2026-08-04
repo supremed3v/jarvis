@@ -1174,7 +1174,7 @@ SPEC-0069-settings-management-ui.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

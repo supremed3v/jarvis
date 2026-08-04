@@ -6,9 +6,10 @@ function describe(items: TrayMenuItem[]): string[] {
   return items.map((item) => (item.type === "separator" ? "---" : `${item.id}:${item.label}`));
 }
 
-test("menu template lists the SPEC-0068 quick actions in order", () => {
+test("menu template lists the quick actions in order", () => {
   assert.deepStrictEqual(describe(buildTrayMenuTemplate(false)), [
     "open:Open Application",
+    "settings:Settings",
     "voice:Start Voice Mode",
     "---",
     "quit:Exit",
@@ -30,7 +31,7 @@ test("voice item toggles its label with the voice mode state", () => {
 });
 
 test("every normal item carries one of the dispatcher's known ids", () => {
-  const ids = new Set(["open", "voice", "quit"]);
+  const ids = new Set(["open", "settings", "voice", "quit"]);
   for (const item of buildTrayMenuTemplate(false)) {
     if (item.type === "separator") {
       continue;

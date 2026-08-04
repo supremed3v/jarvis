@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS Settings</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      font-size: 1.2rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #00d4ff;
+    }
+    .saved-hint { font-size: 0.75rem; color: #6ee7a0; }
+    .saved-hint.hidden { visibility: hidden; }
+    section {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    section h2 {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: #777;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      align-items: center;
+      gap: 12px;
+    }
+    .row label { font-size: 0.85rem; color: #ccc; }
+    .row input[type="text"],
+    .row input[type="number"],
+    .row select {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: #14142a;
+      color: #e0e0e0;
+      font-size: 0.85rem;
+    }
+    .row input:focus, .row select:focus {
+      outline: none;
+      border-color: #00d4ff;
+    }
+    .row .checkbox {
+      justify-self: start;
+      width: 18px;
+      height: 18px;
+      accent-color: #00d4ff;
+    }
+    .error-banner {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(255, 84, 84, 0.12);
+      border: 1px solid rgba(255, 84, 84, 0.4);
+      color: #ffb4b4;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .error-banner.visible { display: block; }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    button {
+      padding: 9px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .save {
+      background: #00d4ff;
+      color: #0a0a18;
+      font-weight: 600;
+    }
+    .save:disabled { opacity: 0.5; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="page" id="page">
+    <header>
+      <h1>JARVIS Settings</h1>
+      <span class="saved-hint hidden" id="saved-hint">Saved</span>
+    </header>
+
+    <p class="error-banner" id="error"></p>
+
+    <section>
+      <h2>Model Settings</h2>
+      <div class="row">
+        <label for="model-provider">Provider</label>
+        <select id="model-provider" data-field="model.provider">
+          <option value="ollama">ollama</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="model-ollama-host">Ollama host</label>
+        <input type="text" id="model-ollama-host" data-field="model.ollamaHost" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="model-ollama-port">Ollama port</label>
+        <input type="number" id="model-ollama-port" data-field="model.ollamaPort" min="1" max="65535" step="1">
+      </div>
+      <div class="row">
+        <label for="model-default-model">Default model</label>
+        <input type="text" id="model-default-model" data-field="model.defaultModel" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="model-temperature">Temperature</label>
+        <input type="number" id="model-temperature" data-field="model.temperature" min="0" max="2" step="0.1">
+      </div>
+      <div class="row">
+        <label for="model-max-tokens">Max tokens</label>
+        <input type="number" id="model-max-tokens" data-field="model.maxTokens" min="0" step="1">
+      </div>
+    </section>
+
+    <section>
+      <h2>Voice Settings</h2>
+      <div class="row">
+        <label for="voice-wake-word-model">Wake word model path</label>
+        <input type="text" id="voice-wake-word-model" data-field="voice.wakeWordModelPath" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="voice-stt-model">STT model</label>
+        <input type="text" id="voice-stt-model" data-field="voice.sttModel" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="voice-stt-language">STT language (empty = auto-detect)</label>
+        <input type="text" id="voice-stt-language" data-field="voice.sttLanguage" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="voice-stt-device">STT device</label>
+        <select id="voice-stt-device" data-field="voice.sttDevice">
+          <option value="cpu">cpu</option>
+          <option value="cuda">cuda</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="voice-tts-model">TTS model</label>
+        <input type="text" id="voice-tts-model" data-field="voice.ttsModel" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="voice-audio-device">Audio device</label>
+        <input type="text" id="voice-audio-device" data-field="voice.audioDevice" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="voice-sample-rate">Capture sample rate</label>
+        <input type="number" id="voice-sample-rate" data-field="voice.sampleRate" min="1" step="1">
+      </div>
+      <div class="row">
+        <label for="voice-tts-sample-rate">TTS sample rate</label>
+        <input type="number" id="voice-tts-sample-rate" data-field="voice.ttsSampleRate" min="1" step="1">
+      </div>
+    </section>
+
+    <section>
+      <h2>Permissions</h2>
+      <div class="row">
+        <label for="permissions-filesystem">Filesystem tools</label>
+        <input type="checkbox" id="permissions-filesystem" class="checkbox" data-field="permissions.filesystemEnabled">
+      </div>
+      <div class="row">
+        <label for="permissions-terminal">Terminal tools</label>
+        <input type="checkbox" id="permissions-terminal" class="checkbox" data-field="permissions.terminalEnabled">
+      </div>
+      <div class="row">
+        <label for="permissions-browser">Browser tools</label>
+        <input type="checkbox" id="permissions-browser" class="checkbox" data-field="permissions.browserEnabled">
+      </div>
+    </section>
+
+    <section>
+      <h2>User Preferences</h2>
+      <div class="row">
+        <label for="preferences-start-voice">Start voice mode on launch</label>
+        <input type="checkbox" id="preferences-start-voice" class="checkbox" data-field="preferences.startVoiceOnLaunch">
+      </div>
+      <div class="row">
+        <label for="preferences-ui-language">UI language</label>
+        <input type="text" id="preferences-ui-language" data-field="preferences.uiLanguage" spellcheck="false">
+      </div>
+    </section>
+
+    <section>
+      <h2>Application Behavior</h2>
+      <div class="row">
+        <label for="app-environment">Environment</label>
+        <select id="app-environment" data-field="app.environment">
+          <option value="development">development</option>
+          <option value="production">production</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="app-log-level">Log level</label>
+        <select id="app-log-level" data-field="app.logLevel">
+          <option value="debug">debug</option>
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button type="button" class="save" id="save">Save Settings</button>
+    </div>
+  </div>
+  <script src="settingsRenderer.js"></script>
+</body>
+</html>

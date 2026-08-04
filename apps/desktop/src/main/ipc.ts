@@ -12,9 +12,11 @@ import {
   type ToolApprovalResult,
   type UserCommandResult,
 } from "../shared/ipc";
+import type { Settings, SettingsPatch } from "../shared/settings";
 import type { RuntimeClient } from "./runtimeClient";
+import type { SettingsStore } from "./settingsStore";
 
-export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient): void {
+export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient, settings: SettingsStore): void {
   ipc.handle(assertIpcChannel(IpcChannels.runtime.ping), () => ok("pong"));
 
   ipc.handle(assertIpcChannel(IpcChannels.runtime.getStatus), async (): Promise<IpcResult<RuntimeStatus>> => {
@@ -51,6 +53,15 @@ export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient): void 
     runtime.respondApproval(result.data.id, result.data.approved);
     const received: ToolApprovalResult = { id: result.data.id, received: true };
     return ok(received);
+  });
+
+  ipc.handle(assertIpcChannel(IpcChannels.settings.get), (): IpcResult<Settings> => ok(settings.get()));
+
+  ipc.handle(assertIpcChannel(IpcChannels.settings.save), (_event, payload: unknown): IpcResult<Settings> => {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return fail("INVALID_SETTINGS", "Settings payload must be an object");
+    }
+    return settings.update(payload as SettingsPatch);
   });
 }
 

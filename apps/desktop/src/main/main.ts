@@ -2,11 +2,14 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import * as path from "path";
 import { broadcast, registerIpcHandlers } from "./ipc";
 import { IpcChannels, type RuntimeStatus } from "../shared/ipc";
+import type { Settings } from "../shared/settings";
 import { RuntimeClient } from "./runtimeClient";
+import { SettingsStore } from "./settingsStore";
 import { VoiceUiStore, isVoiceEventType } from "../shared/voice";
 import { createJarvisTray, type JarvisTray } from "./tray";
 
 let mainWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let runtimeClient: RuntimeClient | null = null;
 let voiceStore: VoiceUiStore = new VoiceUiStore();
 let tray: JarvisTray | null = null;
@@ -60,6 +63,48 @@ function showMainWindow(): void {
   mainWindow.focus();
 }
 
+// createSettingsWindow opens the SPEC-0069 settings window. It is a separate
+// sandboxed BrowserWindow loading settings.html; the renderer reads and saves
+// settings through the jarvis:settings:* IPC channels.
+function createSettingsWindow(): void {
+  settingsWindow = new BrowserWindow({
+    width: 720,
+    height: 680,
+    minWidth: 520,
+    minHeight: 480,
+    title: "JARVIS Settings",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  settingsWindow.loadFile(path.join(__dirname, "..", "renderer", "settings.html"));
+
+  settingsWindow.once("ready-to-show", () => {
+    settingsWindow?.show();
+  });
+
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
+}
+
+function showSettingsWindow(): void {
+  if (settingsWindow === null) {
+    createSettingsWindow();
+    return;
+  }
+  if (settingsWindow.isMinimized()) {
+    settingsWindow.restore();
+  }
+  settingsWindow.show();
+  settingsWindow.focus();
+}
+
 function rebuildTray(): void {
   tray?.rebuild(voiceModeActive);
 }
@@ -94,12 +139,30 @@ function forwardToRenderer(channel: string, payload: unknown): void {
   }
 }
 
+// broadcastToAll pushes a payload to every open window (main + settings), so a
+// settings change saved in one window reaches any other open surface.
+function broadcastToAll(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    broadcast(win, channel, payload);
+  }
+}
+
 function runtimeOfflineStatus(): RuntimeStatus {
   return {
     state: "error",
     version: app.getVersion(),
     lastError: "core runtime not connected",
   };
+}
+
+// createSettingsStore owns the SPEC-0069 settings store for the main process:
+// a JSON file under the app's userData directory, loaded at startup and
+// re-broadcast to every window whenever a save is accepted.
+function createSettingsStore(): SettingsStore {
+  const store = new SettingsStore(path.join(app.getPath("userData"), "settings.json"));
+  store.load();
+  store.onChange((settings: Settings) => broadcastToAll(IpcChannels.settings.changed, settings));
+  return store;
 }
 
 function createRuntimeClient(): RuntimeClient {
@@ -144,7 +207,7 @@ function createRuntimeClient(): RuntimeClient {
 
 app.whenReady().then(() => {
   runtimeClient = createRuntimeClient();
-  registerIpcHandlers(ipcMain, runtimeClient);
+  registerIpcHandlers(ipcMain, runtimeClient, createSettingsStore());
   runtimeClient.connect();
 
   createWindow();
@@ -152,6 +215,7 @@ app.whenReady().then(() => {
   try {
     tray = createJarvisTray({
       open: showMainWindow,
+      settings: showSettingsWindow,
       voice: () => {
         void toggleVoiceMode();
       },

@@ -1,4 +1,5 @@
 import type { CommandResult, RuntimeEvent, StreamChunk } from "./runtime";
+import type { Settings, SettingsPatch } from "./settings";
 import type { VoiceUiSnapshot } from "./voice";
 
 export const IpcChannels = {
@@ -20,6 +21,11 @@ export const IpcChannels = {
   },
   voice: {
     event: "jarvis:voice:event",
+  },
+  settings: {
+    get: "jarvis:settings:get",
+    save: "jarvis:settings:save",
+    changed: "jarvis:settings:changed",
   },
 } as const;
 
@@ -145,5 +151,10 @@ export interface JarvisBridge {
   };
   voice: {
     onEvent: Subscribe<VoiceUiSnapshot>;
+  };
+  settings: {
+    get: () => Promise<IpcResult<Settings>>;
+    save: (patch: SettingsPatch) => Promise<IpcResult<Settings>>;
+    onChanged: Subscribe<Settings>;
   };
 }
