@@ -1089,7 +1089,7 @@ SPEC-0064-desktop-ipc-architecture.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import * as path from "path";
+import { broadcast, registerIpcHandlers } from "./ipc";
+import { IpcChannels } from "../shared/ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -21,6 +23,20 @@ function createWindow(): void {
 
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (!mainWindow) {
+      return;
+    }
+    broadcast(mainWindow, IpcChannels.runtime.statusChanged, {
+      state: "ready",
+      version: app.getVersion(),
+    });
+    broadcast(mainWindow, IpcChannels.voice.event, {
+      type: "wake-word",
+      timestamp: Date.now(),
+    });
+  });
+
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
   });
@@ -31,7 +47,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  ipcMain.handle("runtime:ping", () => "pong");
+  registerIpcHandlers(ipcMain);
 
   createWindow();
 
