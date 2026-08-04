@@ -15,6 +15,8 @@ export const RuntimeFrameType = {
   commandSubmit: "command.submit",
   commandCancel: "command.cancel",
   toolApprovalResponse: "tool.approval_response",
+  voiceStart: "voice.start",
+  voiceStop: "voice.stop",
   pong: "pong",
   status: "status",
   statusChanged: "status.changed",
@@ -22,6 +24,7 @@ export const RuntimeFrameType = {
   commandStream: "command.stream",
   commandResult: "command.result",
   toolApprovalRequested: "tool.approval_requested",
+  voiceResult: "voice.result",
   error: "error",
 } as const;
 
@@ -105,6 +108,14 @@ export function frameCancelCommand(id: string): RuntimeFrame {
 
 export function frameApprovalResponse(id: string, approved: boolean): RuntimeFrame {
   return { type: RuntimeFrameType.toolApprovalResponse, payload: { id, approved } };
+}
+
+export function frameVoiceStart(id: string): RuntimeFrame {
+  return { type: RuntimeFrameType.voiceStart, id };
+}
+
+export function frameVoiceStop(id: string): RuntimeFrame {
+  return { type: RuntimeFrameType.voiceStop, id };
 }
 
 export type ParseFrameResult =
@@ -242,4 +253,24 @@ export function asErrorPayload(payload: unknown): RuntimeError | null {
     return null;
   }
   return { code: payload.error.code, message: payload.error.message };
+}
+
+// VoiceResult is the synchronous acknowledgement for a voice.start / voice.stop
+// frame (SPEC-0068's tray "Start voice mode" control): ok is true when the
+// transition took effect, and a structured error explains a failure.
+export interface VoiceResult {
+  ok: boolean;
+  error?: RuntimeError;
+}
+
+// asVoiceResult decodes a voice.result payload.
+export function asVoiceResult(payload: unknown): VoiceResult | null {
+  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+    return null;
+  }
+  const result: VoiceResult = { ok: payload.ok };
+  if (isRecord(payload.error) && typeof payload.error.code === "string" && typeof payload.error.message === "string") {
+    result.error = { code: payload.error.code, message: payload.error.message };
+  }
+  return result;
 }

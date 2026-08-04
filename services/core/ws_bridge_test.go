@@ -526,3 +526,101 @@ func TestBridgeListenConflictFails(t *testing.T) {
 		t.Fatalf("conflicting Start error type = %v, want TypeUnavailable", err)
 	}
 }
+
+// fakeVoiceSessionManager is a test double for the SPEC-0060 SessionManager:
+// it records whether Start/Stop were called and can be made to fail.
+type fakeVoiceSessionManager struct {
+	mu       sync.Mutex
+	calls    []string
+	startErr error
+	stopErr  error
+}
+
+func (f *fakeVoiceSessionManager) Start() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "start")
+	return f.startErr
+}
+
+func (f *fakeVoiceSessionManager) Stop() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "stop")
+	return f.stopErr
+}
+
+func (f *fakeVoiceSessionManager) callsSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// readVoiceResult reads a voice.result frame, asserts its echoed id and ok
+// flag, and returns the frame so the caller can inspect the error.
+func (c *testClient) readVoiceResult(id string, wantOK bool) bridgeFrame {
+	c.t.Helper()
+	frame := c.readType(frameVoiceResult)
+	if frame.ID != id {
+		c.t.Fatalf("voice.result id = %q, want %q", frame.ID, id)
+	}
+	if frame.Payload["ok"] != wantOK {
+		c.t.Fatalf("voice.result ok = %v, want %v (payload %v)", frame.Payload["ok"], wantOK, frame.Payload)
+	}
+	return frame
+}
+
+func TestBridgeVoiceControlStartAndStop(t *testing.T) {
+	sm := &fakeVoiceSessionManager{}
+	b := NewBridge(WithBridgeVoiceSessionManager(sm), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+	waitConnected(t, c)
+
+	c.send(bridgeFrame{Type: frameVoiceStart, ID: "v1"})
+	c.readVoiceResult("v1", true)
+
+	c.send(bridgeFrame{Type: frameVoiceStop, ID: "v2"})
+	c.readVoiceResult("v2", true)
+
+	if got, want := sm.callsSnapshot(), []string{"start", "stop"}; !slicesEqual(got, want) {
+		t.Fatalf("session manager calls = %v, want %v", got, want)
+	}
+}
+
+func TestBridgeVoiceControlDisabled(t *testing.T) {
+	b := NewBridge(WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+	waitConnected(t, c)
+
+	c.send(bridgeFrame{Type: frameVoiceStart, ID: "v1"})
+	frame := c.readVoiceResult("v1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "VOICE_DISABLED" {
+		t.Fatalf("voice.result error code = %v, want VOICE_DISABLED", code)
+	}
+}
+
+func TestBridgeVoiceControlFailure(t *testing.T) {
+	sm := &fakeVoiceSessionManager{startErr: pkgerrors.New(pkgerrors.TypeInternal, "VOICE_START_FAILED", "core.voice", "boom")}
+	b := NewBridge(WithBridgeVoiceSessionManager(sm), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+	waitConnected(t, c)
+
+	c.send(bridgeFrame{Type: frameVoiceStart, ID: "v1"})
+	frame := c.readVoiceResult("v1", false)
+	errorPayload, _ := frame.Payload["error"].(map[string]any)
+	if errorPayload["code"] != "VOICE_START_FAILED" {
+		t.Fatalf("voice.result error code = %v, want VOICE_START_FAILED", errorPayload["code"])
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

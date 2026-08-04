@@ -221,6 +221,59 @@ test("respondApproval sends tool.approval_response", () => {
   client.disconnect();
 });
 
+test("startVoice sends voice.start and resolves on the matching voice.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.startVoice();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "voice.start");
+  assert.strictEqual(typeof sent.id, "string");
+
+  socket().serverPush({ type: "voice.result", id: sent.id, payload: { ok: true } });
+  assert.deepStrictEqual(await promise, { ok: true });
+  client.disconnect();
+});
+
+test("stopVoice sends voice.stop and surfaces a runtime failure", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.stopVoice();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "voice.stop");
+  assert.strictEqual(typeof sent.id, "string");
+
+  socket().serverPush({
+    type: "voice.result",
+    id: sent.id,
+    payload: { ok: false, error: { code: "VOICE_CONTROL_FAILED", message: "boom" } },
+  });
+  assert.deepStrictEqual(await promise, { ok: false, error: { code: "VOICE_CONTROL_FAILED", message: "boom" } });
+  client.disconnect();
+});
+
+test("startVoice rejects when the client is not connected", async () => {
+  const { client } = makeClient();
+  client.connect();
+  await assert.rejects(client.startVoice(), (error: { code?: string }) => error.code === "NOT_CONNECTED");
+  client.disconnect();
+});
+
+test("startVoice rejects a malformed voice.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.startVoice();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  socket().serverPush({ type: "voice.result", id: sent.id, payload: { ok: "yes" } });
+  await assert.rejects(promise, (error: { code?: string }) => error.code === "INVALID_VOICE_RESULT");
+  client.disconnect();
+});
+
 test("stream frames drive stream and result handlers", () => {
   const { client, socket, chunks, results } = makeClient();
   client.connect();

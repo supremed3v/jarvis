@@ -4,10 +4,13 @@ import { broadcast, registerIpcHandlers } from "./ipc";
 import { IpcChannels, type RuntimeStatus } from "../shared/ipc";
 import { RuntimeClient } from "./runtimeClient";
 import { VoiceUiStore, isVoiceEventType } from "../shared/voice";
+import { createJarvisTray, type JarvisTray } from "./tray";
 
 let mainWindow: BrowserWindow | null = null;
 let runtimeClient: RuntimeClient | null = null;
 let voiceStore: VoiceUiStore = new VoiceUiStore();
+let tray: JarvisTray | null = null;
+let voiceModeActive = false;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -40,6 +43,49 @@ function createWindow(): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+// showMainWindow reveals the main window, recreating it if it was closed,
+// so the tray's "Open Application" action and the macOS activate hook share
+// one behavior.
+function showMainWindow(): void {
+  if (mainWindow === null) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function rebuildTray(): void {
+  tray?.rebuild(voiceModeActive);
+}
+
+// toggleVoiceMode drives SPEC-0068's tray "Start Voice Mode" action: it asks
+// the runtime to start or stop the voice session lifecycle (the voice.start /
+// voice.stop bridge frames) and only flips the tray's state after the runtime
+// acknowledges the transition.
+async function toggleVoiceMode(): Promise<void> {
+  const runtime = runtimeClient;
+  if (runtime === null) {
+    return;
+  }
+  try {
+    const result = voiceModeActive ? await runtime.stopVoice() : await runtime.startVoice();
+    if (result.ok) {
+      voiceModeActive = !voiceModeActive;
+      rebuildTray();
+      return;
+    }
+    console.error(
+      `[tray] voice control failed: ${result.error?.code ?? "unknown"}: ${result.error?.message ?? "unknown"}`,
+    );
+  } catch (error) {
+    console.error("[tray] voice control error", error);
+  }
 }
 
 function forwardToRenderer(channel: string, payload: unknown): void {
@@ -103,6 +149,20 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  try {
+    tray = createJarvisTray({
+      open: showMainWindow,
+      voice: () => {
+        void toggleVoiceMode();
+      },
+      quit: () => app.quit(),
+    });
+  } catch (error) {
+    // A tray backend can be unavailable (e.g. no status-notifier host on some
+    // Linux setups); the windowed app must still start without it.
+    console.error("[tray] tray unavailable", error);
+  }
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -111,6 +171,8 @@ app.whenReady().then(() => {
 });
 
 app.on("will-quit", () => {
+  tray?.destroy();
+  tray = null;
   runtimeClient?.disconnect();
 });
 

@@ -85,17 +85,20 @@ const (
 
 // Wire frame types, shared by both directions. Client-to-server frames
 // (ping, get_status, command.submit, command.cancel,
-// tool.approval_response) carry a client-generated id the server echoes in
-// every frame it sends in reply. Server-to-client frames (pong, status,
-// status.changed, event, command.stream, command.result,
-// tool.approval_requested, error) are the transport half of the same domains
-// SPEC-0064's renderer IPC channels already define.
+// tool.approval_response, voice.start, voice.stop) carry a client-generated
+// id the server echoes in every frame it sends in reply. Server-to-client
+// frames (pong, status, status.changed, event, command.stream,
+// command.result, tool.approval_requested, voice.result, error) are the
+// transport half of the same domains SPEC-0064's renderer IPC channels
+// already define.
 const (
 	framePing                 = "ping"
 	frameGetStatus            = "get_status"
 	frameCommandSubmit        = "command.submit"
 	frameCommandCancel        = "command.cancel"
 	frameToolApprovalResponse = "tool.approval_response"
+	frameVoiceStart           = "voice.start"
+	frameVoiceStop            = "voice.stop"
 
 	framePong                  = "pong"
 	frameStatus                = "status"
@@ -104,6 +107,7 @@ const (
 	frameCommandStream         = "command.stream"
 	frameCommandResult         = "command.result"
 	frameToolApprovalRequested = "tool.approval_requested"
+	frameVoiceResult           = "voice.result"
 	frameError                 = "error"
 )
 
@@ -228,6 +232,7 @@ type Bridge struct {
 	agents           AgentRegistry
 	defaultAgent     string
 	approvals        *ApprovalQueue
+	voice            VoiceSessionManager
 
 	mu          sync.Mutex
 	state       string
@@ -306,6 +311,14 @@ func WithBridgeAgentRegistry(registry AgentRegistry, defaultAgentID string) Brid
 // frames and resolves them from "tool.approval_response" frames. Optional.
 func WithApprovalQueue(q *ApprovalQueue) BridgeOption {
 	return func(b *Bridge) { b.approvals = q }
+}
+
+// WithBridgeVoiceSessionManager wires the SPEC-0060 SessionManager so
+// "voice.start" and "voice.stop" frames (SPEC-0068's tray "Start voice mode"
+// control) start and stop the voice session lifecycle. Optional; a Bridge
+// without one answers those frames with a VOICE_DISABLED error.
+func WithBridgeVoiceSessionManager(m VoiceSessionManager) BridgeOption {
+	return func(b *Bridge) { b.voice = m }
 }
 
 // NewBridge creates a ready-to-use Bridge. All slots are optional and set
@@ -602,6 +615,10 @@ func (b *Bridge) handleFrame(c *wsClient, frame bridgeFrame) {
 		b.handleCommandCancel(c, frame)
 	case frameToolApprovalResponse:
 		b.handleToolApprovalResponse(c, frame)
+	case frameVoiceStart:
+		b.handleVoiceControl(c, frame, true)
+	case frameVoiceStop:
+		b.handleVoiceControl(c, frame, false)
 	default:
 		c.send(bridgeFrame{Type: frameError, ID: frame.ID, Payload: map[string]any{
 			"error": map[string]any{"code": "UNKNOWN_FRAME_TYPE", "message": "unknown frame type: " + frame.Type},
@@ -826,6 +843,50 @@ func (b *Bridge) handleToolApprovalResponse(c *wsClient, frame bridgeFrame) {
 		return
 	}
 	b.logf("bridge resolved tool approval", map[string]any{"approvalId": id, "approved": approved})
+}
+
+// handleVoiceControl processes a voice.start / voice.stop frame by starting
+// or stopping the wired VoiceSessionManager (SPEC-0060), enabling SPEC-0068's
+// tray "Start voice mode" control over the same bridge the desktop uses for
+// everything else. It always replies with a synchronous "voice.result" frame
+// echoing the request id, so the desktop knows whether the transition took
+// effect; without a wired session manager it replies ok:false with a
+// VOICE_DISABLED error.
+func (b *Bridge) handleVoiceControl(c *wsClient, frame bridgeFrame, start bool) {
+	if b.voice == nil {
+		c.send(bridgeFrame{Type: frameVoiceResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "VOICE_DISABLED",
+				"message": "no voice session manager is configured on the bridge",
+			},
+		}})
+		return
+	}
+
+	var err error
+	if start {
+		err = b.voice.Start()
+	} else {
+		err = b.voice.Stop()
+	}
+	if err != nil {
+		fe := bridgeError{Code: "VOICE_CONTROL_FAILED", Message: err.Error()}
+		if e, ok := err.(*errors.Error); ok {
+			fe.Code = e.Code
+			fe.Message = e.Message
+		}
+		c.send(bridgeFrame{Type: frameVoiceResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false, "error": fe,
+		}})
+		return
+	}
+	action := "stop"
+	if start {
+		action = "start"
+	}
+	b.logf("bridge voice control", map[string]any{"action": action})
+	c.send(bridgeFrame{Type: frameVoiceResult, ID: frame.ID, Payload: map[string]any{"ok": true}})
 }
 
 // pollApprovals watches the wired ApprovalQueue for newly pending requests

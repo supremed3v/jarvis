@@ -10,11 +10,14 @@ import {
   asStatus,
   asStreamChunk,
   asToolApprovalRequested,
+  asVoiceResult,
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
   framePing,
   frameSubmitCommand,
+  frameVoiceStart,
+  frameVoiceStop,
   isRuntimeFrameType,
   parseFrame,
 } from "./runtime";
@@ -48,6 +51,11 @@ test("frame builders produce the protocol envelopes", () => {
     type: "tool.approval_response",
     payload: { id: "a-1", approved: true },
   });
+});
+
+test("voice frame builders produce the protocol envelopes", () => {
+  assert.deepStrictEqual(frameVoiceStart("v-1"), { type: "voice.start", id: "v-1" });
+  assert.deepStrictEqual(frameVoiceStop("v-2"), { type: "voice.stop", id: "v-2" });
 });
 
 test("parseFrame decodes a server frame envelope", () => {
@@ -164,5 +172,18 @@ test("asErrorPayload decodes error frames", () => {
   });
   for (const payload of [null, {}, { error: {} }, { error: { code: "X" } }]) {
     assert.strictEqual(asErrorPayload(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("asVoiceResult decodes voice.result acknowledgements", () => {
+  assert.deepStrictEqual(asVoiceResult({ ok: true }), { ok: true });
+  assert.deepStrictEqual(
+    asVoiceResult({ ok: false, error: { code: "VOICE_DISABLED", message: "no session manager" } }),
+    { ok: false, error: { code: "VOICE_DISABLED", message: "no session manager" } },
+  );
+  // A malformed optional error is dropped, matching asStatus/asCommandResult.
+  assert.deepStrictEqual(asVoiceResult({ ok: true, error: { code: "X" } }), { ok: true });
+  for (const payload of [null, {}, { ok: "yes" }]) {
+    assert.strictEqual(asVoiceResult(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
   }
 });

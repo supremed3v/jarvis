@@ -1157,7 +1157,7 @@ SPEC-0068-system-tray-application.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -15,11 +15,14 @@ import {
   asStatus,
   asStreamChunk,
   asToolApprovalRequested,
+  asVoiceResult,
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
   framePing,
   frameSubmitCommand,
+  frameVoiceStart,
+  frameVoiceStop,
   parseFrame,
   type CommandResult,
   type RuntimeError,
@@ -28,6 +31,7 @@ import {
   type RuntimeStatus,
   type StreamChunk,
   type ToolApprovalRequested,
+  type VoiceResult,
 } from "../shared/runtime";
 
 export type RuntimeConnectionState = "idle" | "connecting" | "connected" | "disconnected";
@@ -164,6 +168,29 @@ export class RuntimeClient {
     this.sendFrame(frameApprovalResponse(id, approved));
   }
 
+  // startVoice sends a voice.start frame (SPEC-0068's tray "Start voice mode"
+  // control) and resolves with the runtime's voice.result acknowledgement.
+  startVoice(): Promise<VoiceResult> {
+    return this.voiceRequest(frameVoiceStart);
+  }
+
+  // stopVoice sends a voice.stop frame and resolves with the runtime's
+  // voice.result acknowledgement.
+  stopVoice(): Promise<VoiceResult> {
+    return this.voiceRequest(frameVoiceStop);
+  }
+
+  private voiceRequest(buildFrame: (id: string) => RuntimeFrame): Promise<VoiceResult> {
+    const id = randomUUID();
+    return this.request(id, buildFrame(id)).then((payload) => {
+      const result = asVoiceResult(payload);
+      if (!result) {
+        throw { code: "INVALID_VOICE_RESULT", message: "malformed voice.result frame from runtime" } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
   private request(id: string, frame: RuntimeFrame): Promise<Record<string, unknown>> {
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       if (this.state !== "connected" || this.socket === null) {
@@ -233,6 +260,7 @@ export class RuntimeClient {
     switch (frame.type) {
       case RuntimeFrameType.pong:
       case RuntimeFrameType.status:
+      case RuntimeFrameType.voiceResult:
         this.settleRequest(frame);
         return;
       case RuntimeFrameType.statusChanged: {
