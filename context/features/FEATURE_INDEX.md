@@ -1140,7 +1140,7 @@ SPEC-0067-voice-interface-ui.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

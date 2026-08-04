@@ -1,4 +1,5 @@
 import type { CommandResult, RuntimeEvent, StreamChunk } from "./runtime";
+import type { VoiceUiSnapshot } from "./voice";
 
 export const IpcChannels = {
   runtime: {
@@ -121,12 +122,6 @@ export function validateToolApprovalResponse(input: unknown): IpcResult<ToolAppr
   return ok({ id: record.id, approved: record.approved });
 }
 
-export interface VoiceEvent {
-  type: "wake-word" | "transcript" | "response" | "session-ended";
-  timestamp: number;
-  payload?: unknown;
-}
-
 export type Subscribe<T> = (callback: (payload: T) => void) => () => void;
 
 export interface JarvisBridge {
@@ -149,6 +144,6 @@ export interface JarvisBridge {
     onApprovalRequested: Subscribe<ToolApprovalRequest>;
   };
   voice: {
-    onEvent: Subscribe<VoiceEvent>;
+    onEvent: Subscribe<VoiceUiSnapshot>;
   };
 }

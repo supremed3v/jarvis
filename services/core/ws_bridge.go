@@ -188,6 +188,8 @@ var defaultForwardedEvents = []types.EventType{
 
 	// Mirrors core/voice/session_manager.go's session lifecycle events.
 	"VOICE_SESSION_STARTED",
+	"VOICE_SESSION_PROCESSING",
+	"VOICE_SESSION_SPEAKING",
 	"VOICE_SESSION_COMPLETED",
 	"VOICE_SESSION_FAILED",
 	"VOICE_SESSION_INTERRUPTED",

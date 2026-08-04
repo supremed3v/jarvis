@@ -264,6 +264,58 @@ func TestSessionManager_CompletesFullCycle(t *testing.T) {
 	}
 }
 
+// TestSessionManager_PublishesProcessingAndSpeaking proves the intermediate
+// state-transition events (SPEC-0067's THINKING/SPEAKING sources) are
+// published in flow order with their session id and transcript payload.
+func TestSessionManager_PublishesProcessingAndSpeaking(t *testing.T) {
+	tts := &fakeTTSProvider{audio: []byte("synthesized-audio")}
+	handler := func(ctx context.Context, transcript string) (string, error) {
+		return "acknowledged", nil
+	}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+	started := subscribeOnce(bus, EventSessionStarted)
+	processing := subscribeOnce(bus, EventSessionProcessing)
+	speaking := subscribeOnce(bus, EventSessionSpeaking)
+	completed := subscribeOnce(bus, EventSessionCompleted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	startEvent := waitForEvent(t, started, "EventSessionStarted")
+	sessionID, _ := startEvent.Payload["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("EventSessionStarted payload sessionId = %q, want non-empty", sessionID)
+	}
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "turn on the lights", "final": true},
+	})
+
+	processingEvent := waitForEvent(t, processing, "EventSessionProcessing")
+	if got, _ := processingEvent.Payload["sessionId"].(string); got != sessionID {
+		t.Errorf("EventSessionProcessing sessionId = %q, want %q", got, sessionID)
+	}
+	if got, _ := processingEvent.Payload["transcript"].(string); got != "turn on the lights" {
+		t.Errorf("EventSessionProcessing transcript = %q, want %q", got, "turn on the lights")
+	}
+
+	speakingEvent := waitForEvent(t, speaking, "EventSessionSpeaking")
+	if got, _ := speakingEvent.Payload["sessionId"].(string); got != sessionID {
+		t.Errorf("EventSessionSpeaking sessionId = %q, want %q", got, sessionID)
+	}
+
+	completedEvent := waitForEvent(t, completed, "EventSessionCompleted")
+	if got, _ := completedEvent.Payload["sessionId"].(string); got != sessionID {
+		t.Errorf("EventSessionCompleted sessionId = %q, want %q", got, sessionID)
+	}
+}
+
 func TestSessionManager_IgnoresTranscriptWithoutActiveSession(t *testing.T) {
 	handlerCalled := false
 	handler := func(ctx context.Context, transcript string) (string, error) {

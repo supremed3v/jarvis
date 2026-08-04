@@ -33,7 +33,14 @@ const defaultSessionTimeout = 15 * time.Second
 // EventBus (SPEC-0060's "sessions start correctly"/"sessions complete
 // correctly"/"resources are released" testing criteria).
 const (
-	EventSessionStarted     types.EventType = "VOICE_SESSION_STARTED"
+	EventSessionStarted types.EventType = "VOICE_SESSION_STARTED"
+	// EventSessionProcessing marks the STT -> "Process Request" transition
+	// (SPEC-0060's "STT state" requirement), so UI layers can render a
+	// "thinking" state distinct from listening.
+	EventSessionProcessing types.EventType = "VOICE_SESSION_PROCESSING"
+	// EventSessionSpeaking marks the "Generate Response" -> "Speak"
+	// transition, so UI layers can render a "speaking" state.
+	EventSessionSpeaking    types.EventType = "VOICE_SESSION_SPEAKING"
 	EventSessionCompleted   types.EventType = "VOICE_SESSION_COMPLETED"
 	EventSessionFailed      types.EventType = "VOICE_SESSION_FAILED"
 	EventSessionInterrupted types.EventType = "VOICE_SESSION_INTERRUPTED"
@@ -435,6 +442,8 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 	sm.requestDone = doneCh
 	sm.mu.Unlock()
 
+	sm.publish(EventSessionProcessing, map[string]any{"sessionId": session.ID, "transcript": text})
+
 	sm.processRequest(session, text, ctx, cancel, doneCh, gen)
 }
 
@@ -486,6 +495,7 @@ func (sm *SessionManager) processRequest(session *Session, text string, ctx cont
 		session.State = SessionStateResponding
 	}
 	sm.mu.Unlock()
+	sm.publish(EventSessionSpeaking, map[string]any{"sessionId": session.ID})
 
 	audio, err := sm.tts.Synthesize(ctx, response, core.VoiceOptions{})
 	if err != nil {
@@ -621,6 +631,7 @@ func (sm *SessionManager) speakSentences(ctx context.Context, session *Session, 
 			}
 			sm.mu.Unlock()
 			responding = true
+			sm.publish(EventSessionSpeaking, map[string]any{"sessionId": session.ID})
 		}
 		if err := sm.speakSentence(ctx, sentence); err != nil {
 			return err

@@ -9,9 +9,9 @@ import type {
   ToolApprovalResult,
   UserCommandMessage,
   UserCommandResult,
-  VoiceEvent,
 } from "../shared/ipc";
 import type { CommandResult, RuntimeEvent, StreamChunk } from "../shared/runtime";
+import type { VoiceUiSnapshot } from "../shared/voice";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
 // local modules (Electron docs, Process Sandboxing), so channel names are
@@ -86,8 +86,8 @@ const bridge: JarvisBridge = {
   },
 
   voice: {
-    onEvent: (cb: (event: VoiceEvent) => void): (() => void) =>
-      subscribe<VoiceEvent>(CHANNEL.voiceEvent, cb),
+    onEvent: (cb: (snapshot: VoiceUiSnapshot) => void): (() => void) =>
+      subscribe<VoiceUiSnapshot>(CHANNEL.voiceEvent, cb),
   },
 };
 
