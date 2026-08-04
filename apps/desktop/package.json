@@ -5,7 +5,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc && node -e \"require('fs').cpSync('src/renderer','dist/renderer',{recursive:true})\"",
-    "test": "tsc && node --test dist/shared/ipc.test.js dist/shared/runtime.test.js dist/shared/voice.test.js dist/shared/settings.test.js dist/main/runtimeClient.test.js dist/main/trayMenu.test.js dist/main/settingsStore.test.js",
+    "test": "tsc && node --test dist/shared/ipc.test.js dist/shared/runtime.test.js dist/shared/voice.test.js dist/shared/settings.test.js dist/shared/agents.test.js dist/main/runtimeClient.test.js dist/main/trayMenu.test.js dist/main/settingsStore.test.js dist/main/agentStore.test.js",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "watch": "tsc --watch"

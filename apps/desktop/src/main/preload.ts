@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
+  AgentEnabledPatch,
   CommandCancelResult,
   IpcResult,
   JarvisBridge,
@@ -13,6 +14,7 @@ import type {
 import type { CommandResult, RuntimeEvent, StreamChunk } from "../shared/runtime";
 import type { Settings, SettingsPatch } from "../shared/settings";
 import type { VoiceUiSnapshot } from "../shared/voice";
+import type { AgentDashboardState } from "../shared/agents";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
 // local modules (Electron docs, Process Sandboxing), so channel names are
@@ -33,6 +35,9 @@ const CHANNEL = {
   settingsGet: "jarvis:settings:get",
   settingsSave: "jarvis:settings:save",
   settingsChanged: "jarvis:settings:changed",
+  agentsList: "jarvis:agents:list",
+  agentsSetEnabled: "jarvis:agents:set-enabled",
+  agentsUpdated: "jarvis:agents:updated",
 } as const;
 
 function invoke<T>(channel: string, payload?: unknown): Promise<IpcResult<T>> {
@@ -100,6 +105,14 @@ const bridge: JarvisBridge = {
       invoke<Settings>(CHANNEL.settingsSave, patch),
     onChanged: (cb: (settings: Settings) => void): (() => void) =>
       subscribe<Settings>(CHANNEL.settingsChanged, cb),
+  },
+
+  agents: {
+    list: (): Promise<IpcResult<AgentDashboardState>> => invoke<AgentDashboardState>(CHANNEL.agentsList),
+    setEnabled: (patch: AgentEnabledPatch): Promise<IpcResult<AgentEnabledPatch>> =>
+      invoke<AgentEnabledPatch>(CHANNEL.agentsSetEnabled, patch),
+    onUpdated: (cb: (snapshot: AgentDashboardState) => void): (() => void) =>
+      subscribe<AgentDashboardState>(CHANNEL.agentsUpdated, cb),
   },
 };
 

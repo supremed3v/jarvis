@@ -1,6 +1,7 @@
 import type { CommandResult, RuntimeEvent, StreamChunk } from "./runtime";
 import type { Settings, SettingsPatch } from "./settings";
 import type { VoiceUiSnapshot } from "./voice";
+import type { AgentDashboardState } from "./agents";
 
 export const IpcChannels = {
   runtime: {
@@ -26,6 +27,11 @@ export const IpcChannels = {
     get: "jarvis:settings:get",
     save: "jarvis:settings:save",
     changed: "jarvis:settings:changed",
+  },
+  agents: {
+    list: "jarvis:agents:list",
+    setEnabled: "jarvis:agents:set-enabled",
+    updated: "jarvis:agents:updated",
   },
 } as const;
 
@@ -114,6 +120,29 @@ export interface ToolApprovalResult {
   received: boolean;
 }
 
+// AgentEnabledPatch is the payload of jarvis:agents:set-enabled: the agent
+// whose enabled flag the dashboard is changing, and the new value. The main
+// process persists the flag locally (main/agentStore.ts) and, as a best-effort,
+// drives the runtime's agent.start / agent.stop lifecycle frames.
+export interface AgentEnabledPatch {
+  id: string;
+  enabled: boolean;
+}
+
+export function validateAgentEnabledPatch(input: unknown): IpcResult<AgentEnabledPatch> {
+  if (typeof input !== "object" || input === null) {
+    return fail("INVALID_PAYLOAD", "Agent enabled patch must be an object");
+  }
+  const record = input as { id?: unknown; enabled?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0) {
+    return fail("INVALID_AGENT_ID", "Agent enabled patch requires a non-empty id");
+  }
+  if (typeof record.enabled !== "boolean") {
+    return fail("INVALID_AGENT_ENABLED", "Agent enabled patch requires a boolean enabled flag");
+  }
+  return ok({ id: record.id, enabled: record.enabled });
+}
+
 export function validateToolApprovalResponse(input: unknown): IpcResult<ToolApprovalResponse> {
   if (typeof input !== "object" || input === null) {
     return fail("INVALID_PAYLOAD", "Tool approval response must be an object");
@@ -156,5 +185,10 @@ export interface JarvisBridge {
     get: () => Promise<IpcResult<Settings>>;
     save: (patch: SettingsPatch) => Promise<IpcResult<Settings>>;
     onChanged: Subscribe<Settings>;
+  };
+  agents: {
+    list: () => Promise<IpcResult<AgentDashboardState>>;
+    setEnabled: (patch: AgentEnabledPatch) => Promise<IpcResult<AgentEnabledPatch>>;
+    onUpdated: Subscribe<AgentDashboardState>;
   };
 }

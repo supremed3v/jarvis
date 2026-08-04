@@ -17,6 +17,9 @@ export const RuntimeFrameType = {
   toolApprovalResponse: "tool.approval_response",
   voiceStart: "voice.start",
   voiceStop: "voice.stop",
+  agentsList: "agents.list",
+  agentStart: "agent.start",
+  agentStop: "agent.stop",
   pong: "pong",
   status: "status",
   statusChanged: "status.changed",
@@ -25,6 +28,8 @@ export const RuntimeFrameType = {
   commandResult: "command.result",
   toolApprovalRequested: "tool.approval_requested",
   voiceResult: "voice.result",
+  agentsResult: "agents.result",
+  agentResult: "agent.result",
   error: "error",
 } as const;
 
@@ -116,6 +121,18 @@ export function frameVoiceStart(id: string): RuntimeFrame {
 
 export function frameVoiceStop(id: string): RuntimeFrame {
   return { type: RuntimeFrameType.voiceStop, id };
+}
+
+export function frameAgentsList(id: string): RuntimeFrame {
+  return { type: RuntimeFrameType.agentsList, id };
+}
+
+export function frameAgentStart(id: string, agentId: string): RuntimeFrame {
+  return { type: RuntimeFrameType.agentStart, id, payload: { id: agentId } };
+}
+
+export function frameAgentStop(id: string, agentId: string): RuntimeFrame {
+  return { type: RuntimeFrameType.agentStop, id, payload: { id: agentId } };
 }
 
 export type ParseFrameResult =
@@ -269,6 +286,107 @@ export function asVoiceResult(payload: unknown): VoiceResult | null {
     return null;
   }
   const result: VoiceResult = { ok: payload.ok };
+  if (isRecord(payload.error) && typeof payload.error.code === "string" && typeof payload.error.message === "string") {
+    result.error = { code: payload.error.code, message: payload.error.message };
+  }
+  return result;
+}
+
+// AgentView is one registered agent as the SPEC-0070 dashboard renders it,
+// mirroring core.AgentView (services/core/ws_bridge.go). status is a string
+// at the wire level; the UI model in ../agents narrows it to the AgentStatus
+// union, since the Go runtime owns the authoritative state machine.
+export interface AgentView {
+  id: string;
+  name: string;
+  description?: string;
+  capabilities?: string[];
+  permissions?: string[];
+  memoryAccess?: string[];
+  status: string;
+}
+
+// AgentListResult is the payload of an agents.result frame.
+export interface AgentListResult {
+  agents: AgentView[];
+}
+
+// AgentControlResult is the payload of an agent.result frame (the
+// acknowledge for an agent.start / agent.stop request): ok is true when the
+// lifecycle transition took effect, and a structured error explains a
+// failure.
+export interface AgentControlResult {
+  id?: string;
+  ok: boolean;
+  error?: RuntimeError;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return undefined;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+// asAgentView decodes a single agent object from an agents.result payload.
+function asAgentView(raw: unknown): AgentView | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  if (typeof raw.id !== "string" || typeof raw.name !== "string" || typeof raw.status !== "string") {
+    return null;
+  }
+  const view: AgentView = { id: raw.id, name: raw.name, status: raw.status };
+  if (typeof raw.description === "string") {
+    view.description = raw.description;
+  }
+  const capabilities = asStringArray(raw.capabilities);
+  if (capabilities !== undefined) {
+    view.capabilities = capabilities;
+  }
+  const permissions = asStringArray(raw.permissions);
+  if (permissions !== undefined) {
+    view.permissions = permissions;
+  }
+  const memoryAccess = asStringArray(raw.memoryAccess);
+  if (memoryAccess !== undefined) {
+    view.memoryAccess = memoryAccess;
+  }
+  return view;
+}
+
+// asAgentList decodes an agents.result payload.
+export function asAgentList(payload: unknown): AgentListResult | null {
+  if (!isRecord(payload) || !Array.isArray(payload.agents)) {
+    return null;
+  }
+  const agents: AgentView[] = [];
+  for (const raw of payload.agents) {
+    const view = asAgentView(raw);
+    if (view === null) {
+      return null;
+    }
+    agents.push(view);
+  }
+  return { agents };
+}
+
+// asAgentControlResult decodes an agent.result payload.
+export function asAgentControlResult(payload: unknown): AgentControlResult | null {
+  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+    return null;
+  }
+  const result: AgentControlResult = { ok: payload.ok };
+  if (typeof payload.id === "string") {
+    result.id = payload.id;
+  }
   if (isRecord(payload.error) && typeof payload.error.code === "string" && typeof payload.error.message === "string") {
     result.error = { code: payload.error.code, message: payload.error.message };
   }

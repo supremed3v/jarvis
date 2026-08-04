@@ -99,6 +99,9 @@ const (
 	frameToolApprovalResponse = "tool.approval_response"
 	frameVoiceStart           = "voice.start"
 	frameVoiceStop            = "voice.stop"
+	frameAgentsList           = "agents.list"
+	frameAgentStart           = "agent.start"
+	frameAgentStop            = "agent.stop"
 
 	framePong                  = "pong"
 	frameStatus                = "status"
@@ -108,6 +111,8 @@ const (
 	frameCommandResult         = "command.result"
 	frameToolApprovalRequested = "tool.approval_requested"
 	frameVoiceResult           = "voice.result"
+	frameAgentsResult          = "agents.result"
+	frameAgentResult           = "agent.result"
 	frameError                 = "error"
 )
 
@@ -142,6 +147,23 @@ type Command struct {
 type CommandChunk struct {
 	Text string
 	Done bool
+}
+
+// AgentView is one registered agent as the SPEC-0070 Agent Management
+// Dashboard renders it: the identity fields AgentMetadata exposes, its
+// declared capabilities (the tools it may use), its permission-gated tools,
+// its declared memory access, and its current lifecycle status. Status is the
+// SPEC-0021 AgentStatus value ("registered" when no LifecycleManager is wired,
+// so every registered agent is still visible), matching the desktop's
+// AgentStatus union in apps/desktop/src/shared/agents.ts.
+type AgentView struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Permissions  []string `json:"permissions,omitempty"`
+	MemoryAccess []string `json:"memoryAccess,omitempty"`
+	Status       string   `json:"status"`
 }
 
 // CommandHandler processes a single Command and returns its complete result
@@ -230,6 +252,7 @@ type Bridge struct {
 	commandHandler   CommandHandler
 	streamingHandler StreamingCommandHandler
 	agents           AgentRegistry
+	lifecycle        *LifecycleManager
 	defaultAgent     string
 	approvals        *ApprovalQueue
 	voice            VoiceSessionManager
@@ -319,6 +342,16 @@ func WithApprovalQueue(q *ApprovalQueue) BridgeOption {
 // without one answers those frames with a VOICE_DISABLED error.
 func WithBridgeVoiceSessionManager(m VoiceSessionManager) BridgeOption {
 	return func(b *Bridge) { b.voice = m }
+}
+
+// WithBridgeLifecycleManager wires the SPEC-0021 LifecycleManager so
+// "agents.list" reports each registered agent's real lifecycle status and
+// "agent.start" / "agent.stop" frames (SPEC-0070's enable/disable controls)
+// drive actual lifecycle transitions rather than failing. Optional; a Bridge
+// without one reports every registered agent as "registered" and answers
+// agent.start / agent.stop with an AGENT_LIFECYCLE_DISABLED error.
+func WithBridgeLifecycleManager(m *LifecycleManager) BridgeOption {
+	return func(b *Bridge) { b.lifecycle = m }
 }
 
 // NewBridge creates a ready-to-use Bridge. All slots are optional and set
@@ -619,6 +652,12 @@ func (b *Bridge) handleFrame(c *wsClient, frame bridgeFrame) {
 		b.handleVoiceControl(c, frame, true)
 	case frameVoiceStop:
 		b.handleVoiceControl(c, frame, false)
+	case frameAgentsList:
+		b.handleAgentsList(c, frame)
+	case frameAgentStart:
+		b.handleAgentControl(c, frame, true)
+	case frameAgentStop:
+		b.handleAgentControl(c, frame, false)
 	default:
 		c.send(bridgeFrame{Type: frameError, ID: frame.ID, Payload: map[string]any{
 			"error": map[string]any{"code": "UNKNOWN_FRAME_TYPE", "message": "unknown frame type: " + frame.Type},
@@ -887,6 +926,149 @@ func (b *Bridge) handleVoiceControl(c *wsClient, frame bridgeFrame, start bool) 
 	}
 	b.logf("bridge voice control", map[string]any{"action": action})
 	c.send(bridgeFrame{Type: frameVoiceResult, ID: frame.ID, Payload: map[string]any{"ok": true}})
+}
+
+// handleAgentsList processes an agents.list frame by replying with an
+// agents.result frame carrying the AgentView of every registered agent
+// (SPEC-0070's "available agents / status / capabilities / permissions"
+// display data). A Bridge with no AgentRegistry wired replies with an empty
+// list - a runtime with no agents is a valid state, not an error.
+func (b *Bridge) handleAgentsList(c *wsClient, frame bridgeFrame) {
+	c.send(bridgeFrame{Type: frameAgentsResult, ID: frame.ID, Payload: map[string]any{
+		"agents": b.agentViews(),
+	}})
+}
+
+// agentViews builds the AgentView for every registered agent, in the
+// registry's deterministic (ID-sorted) order. Status comes from the wired
+// SPEC-0021 LifecycleManager when one is present, and defaults to "registered"
+// otherwise - an agent registered directly on the registry (not through the
+// lifecycle manager) is visible with the state Register itself records.
+func (b *Bridge) agentViews() []AgentView {
+	if b.agents == nil {
+		return []AgentView{}
+	}
+
+	registered := b.agents.List()
+	views := make([]AgentView, 0, len(registered))
+	for _, agent := range registered {
+		m := agent.Metadata()
+		view := AgentView{
+			ID:           m.ID,
+			Name:         m.Name,
+			Description:  m.Description,
+			Capabilities: m.Tools,
+			Permissions:  m.Permissions,
+			MemoryAccess: m.MemoryAccess,
+			Status:       string(types.AgentStatusRegistered),
+		}
+		if b.lifecycle != nil {
+			if state, err := b.lifecycle.State(m.ID); err == nil {
+				view.Status = string(state)
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+// handleAgentControl processes an agent.start / agent.stop frame (SPEC-0070's
+// enable/disable controls): start enables the agent by driving the wired
+// SPEC-0021 LifecycleManager to a usable state, stop disables it by driving
+// it to STOPPED. It always replies with a synchronous "agent.result" frame
+// echoing the request id, so the desktop knows whether the transition took
+// effect; without a wired lifecycle manager it replies ok:false with an
+// AGENT_LIFECYCLE_DISABLED error.
+func (b *Bridge) handleAgentControl(c *wsClient, frame bridgeFrame, start bool) {
+	if b.lifecycle == nil {
+		c.send(bridgeFrame{Type: frameAgentResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "AGENT_LIFECYCLE_DISABLED",
+				"message": "no agent lifecycle manager is configured on the bridge",
+			},
+		}})
+		return
+	}
+
+	id, _ := frame.Payload["id"].(string)
+	if id == "" {
+		c.send(bridgeFrame{Type: frameAgentResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_AGENT_ID",
+				"message": "agent control requires a non-empty agent id",
+			},
+		}})
+		return
+	}
+
+	var err error
+	if start {
+		err = b.enableAgent(id)
+	} else {
+		err = b.disableAgent(id)
+	}
+	if err != nil {
+		fe := bridgeError{Code: "AGENT_CONTROL_FAILED", Message: err.Error()}
+		if e, ok := err.(*errors.Error); ok {
+			fe.Code = e.Code
+			fe.Message = e.Message
+		}
+		c.send(bridgeFrame{Type: frameAgentResult, ID: frame.ID, Payload: map[string]any{
+			"id": id, "ok": false, "error": fe,
+		}})
+		return
+	}
+	action := "stop"
+	if start {
+		action = "start"
+	}
+	b.logf("bridge agent control", map[string]any{"agentId": id, "action": action})
+	c.send(bridgeFrame{Type: frameAgentResult, ID: frame.ID, Payload: map[string]any{
+		"id": id, "ok": true,
+	}})
+}
+
+// enableAgent transitions id to a usable state via the wired LifecycleManager:
+// REGISTERED agents are initialized (-> READY) and READY agents are started
+// (-> RUNNING). RUNNING is already enabled (idempotent no-op); every other
+// state (INITIALIZING in progress, STOPPED/FAILED terminal) is rejected with
+// the lifecycle's own transition validation error.
+func (b *Bridge) enableAgent(id string) error {
+	state, err := b.lifecycle.State(id)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case types.AgentStatusRegistered:
+		return b.lifecycle.Initialize(context.Background(), id)
+	case types.AgentStatusReady:
+		return b.lifecycle.Start(id)
+	case types.AgentStatusRunning:
+		return nil
+	default:
+		return errors.New(errors.TypeInvalidInput, "AGENT_LIFECYCLE_INVALID_TRANSITION", "core.wsbridge",
+			fmt.Sprintf("agent %q cannot be enabled from state %q", id, state)).With("agentId", id).With("state", string(state))
+	}
+}
+
+// disableAgent transitions id to STOPPED via the wired LifecycleManager:
+// READY and RUNNING agents are stopped (their Cleanup hook runs first, per
+// SPEC-0021). REGISTERED/STOPPED/FAILED agents are already not operational,
+// so disable is an idempotent no-op; INITIALIZING/STOPPING in-progress states
+// fall through to the lifecycle's own transition validation error.
+func (b *Bridge) disableAgent(id string) error {
+	state, err := b.lifecycle.State(id)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case types.AgentStatusReady, types.AgentStatusRunning:
+		return b.lifecycle.Stop(context.Background(), id)
+	default:
+		return nil
+	}
 }
 
 // pollApprovals watches the wired ApprovalQueue for newly pending requests

@@ -4,6 +4,8 @@ import {
   RUNTIME_FRAME_TYPES,
   RUNTIME_URL,
   RuntimeFrameType,
+  asAgentControlResult,
+  asAgentList,
   asCommandResult,
   asErrorPayload,
   asEvent,
@@ -11,6 +13,9 @@ import {
   asStreamChunk,
   asToolApprovalRequested,
   asVoiceResult,
+  frameAgentStart,
+  frameAgentStop,
+  frameAgentsList,
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
@@ -56,6 +61,20 @@ test("frame builders produce the protocol envelopes", () => {
 test("voice frame builders produce the protocol envelopes", () => {
   assert.deepStrictEqual(frameVoiceStart("v-1"), { type: "voice.start", id: "v-1" });
   assert.deepStrictEqual(frameVoiceStop("v-2"), { type: "voice.stop", id: "v-2" });
+});
+
+test("agent frame builders produce the protocol envelopes", () => {
+  assert.deepStrictEqual(frameAgentsList("l-1"), { type: "agents.list", id: "l-1" });
+  assert.deepStrictEqual(frameAgentStart("c-1", "core-agent"), {
+    type: "agent.start",
+    id: "c-1",
+    payload: { id: "core-agent" },
+  });
+  assert.deepStrictEqual(frameAgentStop("c-2", "core-agent"), {
+    type: "agent.stop",
+    id: "c-2",
+    payload: { id: "core-agent" },
+  });
 });
 
 test("parseFrame decodes a server frame envelope", () => {
@@ -185,5 +204,72 @@ test("asVoiceResult decodes voice.result acknowledgements", () => {
   assert.deepStrictEqual(asVoiceResult({ ok: true, error: { code: "X" } }), { ok: true });
   for (const payload of [null, {}, { ok: "yes" }]) {
     assert.strictEqual(asVoiceResult(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("asAgentList decodes agents.result payloads", () => {
+  assert.deepStrictEqual(asAgentList({ agents: [] }), { agents: [] });
+  assert.deepStrictEqual(
+    asAgentList({
+      agents: [
+        {
+          id: "core-agent",
+          name: "Core Agent",
+          description: "assistant",
+          capabilities: ["shell", "read"],
+          permissions: ["terminal"],
+          memoryAccess: ["conversation"],
+          status: "running",
+        },
+      ],
+    }),
+    {
+      agents: [
+        {
+          id: "core-agent",
+          name: "Core Agent",
+          description: "assistant",
+          capabilities: ["shell", "read"],
+          permissions: ["terminal"],
+          memoryAccess: ["conversation"],
+          status: "running",
+        },
+      ],
+    },
+  );
+  // Optional fields may be absent; id/name/status are required.
+  assert.deepStrictEqual(asAgentList({ agents: [{ id: "a", name: "A", status: "registered" }] }), {
+    agents: [{ id: "a", name: "A", status: "registered" }],
+  });
+  // Malformed optional arrays are dropped rather than rejected, matching the
+  // lenient handling of other optional fields.
+  assert.deepStrictEqual(
+    asAgentList({ agents: [{ id: "a", name: "A", status: "running", capabilities: ["ok", 3] }] }),
+    { agents: [{ id: "a", name: "A", status: "running" }] },
+  );
+  for (const payload of [
+    null,
+    {},
+    { agents: "nope" },
+    { agents: [null] },
+    { agents: [{}] },
+    { agents: [{ id: "a", name: "A" }] },
+    { agents: [{ id: "a", name: "A", status: 7 }] },
+  ]) {
+    assert.strictEqual(asAgentList(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("asAgentControlResult decodes agent.result acknowledgements", () => {
+  assert.deepStrictEqual(asAgentControlResult({ id: "core-agent", ok: true }), { id: "core-agent", ok: true });
+  assert.deepStrictEqual(asAgentControlResult({ ok: true }), { ok: true });
+  assert.deepStrictEqual(
+    asAgentControlResult({ id: "core-agent", ok: false, error: { code: "AGENT_LIFECYCLE_DISABLED", message: "no" } }),
+    { id: "core-agent", ok: false, error: { code: "AGENT_LIFECYCLE_DISABLED", message: "no" } },
+  );
+  // A malformed optional error is dropped, matching asVoiceResult.
+  assert.deepStrictEqual(asAgentControlResult({ id: "a", ok: true, error: { code: "X" } }), { id: "a", ok: true });
+  for (const payload of [null, {}, { id: "a" }, { ok: "yes" }]) {
+    assert.strictEqual(asAgentControlResult(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
   }
 });

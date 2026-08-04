@@ -16,6 +16,8 @@ import {
   asStreamChunk,
   asToolApprovalRequested,
   asVoiceResult,
+  asAgentList,
+  asAgentControlResult,
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
@@ -23,6 +25,9 @@ import {
   frameSubmitCommand,
   frameVoiceStart,
   frameVoiceStop,
+  frameAgentsList,
+  frameAgentStart,
+  frameAgentStop,
   parseFrame,
   type CommandResult,
   type RuntimeError,
@@ -32,6 +37,8 @@ import {
   type StreamChunk,
   type ToolApprovalRequested,
   type VoiceResult,
+  type AgentListResult,
+  type AgentControlResult,
 } from "../shared/runtime";
 
 export type RuntimeConnectionState = "idle" | "connecting" | "connected" | "disconnected";
@@ -180,6 +187,39 @@ export class RuntimeClient {
     return this.voiceRequest(frameVoiceStop);
   }
 
+  // listAgents requests the runtime's registered agents (agents.list ->
+  // agents.result, SPEC-0070's dashboard data source).
+  listAgents(): Promise<AgentListResult> {
+    const id = randomUUID();
+    return this.request(id, frameAgentsList(id)).then((payload) => {
+      const result = asAgentList(payload);
+      if (!result) {
+        throw { code: "INVALID_AGENTS_RESULT", message: "malformed agents.result frame from runtime" } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
+  // setAgentEnabled drives an agent.start / agent.stop lifecycle frame and
+  // resolves with the runtime's agent.result acknowledgement. An ok:false
+  // result (e.g. the runtime is not wired with a LifecycleManager yet) is
+  // returned to the caller rather than thrown, so the desktop can still record
+  // the local intent.
+  setAgentEnabled(id: string, enabled: boolean): Promise<AgentControlResult> {
+    const requestId = randomUUID();
+    const frame = enabled ? frameAgentStart(requestId, id) : frameAgentStop(requestId, id);
+    return this.request(requestId, frame).then((payload) => {
+      const result = asAgentControlResult(payload);
+      if (!result) {
+        throw {
+          code: "INVALID_AGENT_RESULT",
+          message: "malformed agent.result frame from runtime",
+        } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
   private voiceRequest(buildFrame: (id: string) => RuntimeFrame): Promise<VoiceResult> {
     const id = randomUUID();
     return this.request(id, buildFrame(id)).then((payload) => {
@@ -261,6 +301,8 @@ export class RuntimeClient {
       case RuntimeFrameType.pong:
       case RuntimeFrameType.status:
       case RuntimeFrameType.voiceResult:
+      case RuntimeFrameType.agentsResult:
+      case RuntimeFrameType.agentResult:
         this.settleRequest(frame);
         return;
       case RuntimeFrameType.statusChanged: {

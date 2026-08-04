@@ -1,17 +1,22 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import * as path from "path";
 import { broadcast, registerIpcHandlers } from "./ipc";
-import { IpcChannels, type RuntimeStatus } from "../shared/ipc";
+import { IpcChannels, fail, type AgentEnabledPatch, type IpcResult, type RuntimeStatus } from "../shared/ipc";
 import type { Settings } from "../shared/settings";
 import { RuntimeClient } from "./runtimeClient";
 import { SettingsStore } from "./settingsStore";
+import { AgentStore } from "./agentStore";
+import { AgentUiStore } from "../shared/agents";
 import { VoiceUiStore, isVoiceEventType } from "../shared/voice";
 import { createJarvisTray, type JarvisTray } from "./tray";
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let agentsWindow: BrowserWindow | null = null;
 let runtimeClient: RuntimeClient | null = null;
 let voiceStore: VoiceUiStore = new VoiceUiStore();
+let agents: AgentUiStore = new AgentUiStore();
+let agentStore: AgentStore | null = null;
 let tray: JarvisTray | null = null;
 let voiceModeActive = false;
 
@@ -105,6 +110,55 @@ function showSettingsWindow(): void {
   settingsWindow.focus();
 }
 
+// createAgentsWindow opens the SPEC-0070 agent management dashboard. It is a
+// separate sandboxed BrowserWindow loading agents.html; the renderer lists
+// agents and toggles their enabled state through the jarvis:agents:* IPC
+// channels, and receives fresh dashboard snapshots on jarvis:agents:updated.
+function createAgentsWindow(): void {
+  agentsWindow = new BrowserWindow({
+    width: 760,
+    height: 640,
+    minWidth: 560,
+    minHeight: 420,
+    title: "JARVIS Agents",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  agentsWindow.loadFile(path.join(__dirname, "..", "renderer", "agents.html"));
+
+  agentsWindow.webContents.on("did-finish-load", () => {
+    if (agentsWindow) {
+      broadcast(agentsWindow, IpcChannels.agents.updated, agents.current);
+    }
+  });
+
+  agentsWindow.once("ready-to-show", () => {
+    agentsWindow?.show();
+  });
+
+  agentsWindow.on("closed", () => {
+    agentsWindow = null;
+  });
+}
+
+function showAgentsWindow(): void {
+  if (agentsWindow === null) {
+    createAgentsWindow();
+    return;
+  }
+  if (agentsWindow.isMinimized()) {
+    agentsWindow.restore();
+  }
+  agentsWindow.show();
+  agentsWindow.focus();
+}
+
 function rebuildTray(): void {
   tray?.rebuild(voiceModeActive);
 }
@@ -165,6 +219,71 @@ function createSettingsStore(): SettingsStore {
   return store;
 }
 
+// createAgentStore owns the SPEC-0070 agent store for the main process: a JSON
+// file under the app's userData directory holding per-agent enabled flags,
+// loaded at startup.
+function createAgentStore(): AgentStore {
+  const store = new AgentStore(path.join(app.getPath("userData"), "agents.json"));
+  store.load();
+  agentStore = store;
+  return store;
+}
+
+// refreshAgents fetches the runtime's registered agents (SPEC-0070's data
+// source), merges them into the dashboard snapshot, and broadcasts the updated
+// snapshot to every open window. The runtime is authoritative for which agents
+// exist and their status/capabilities; the locally persisted enabled flags are
+// preserved by the reducer, so a refresh never resets the user's toggles.
+async function refreshAgents(): Promise<void> {
+  const runtime = runtimeClient;
+  if (runtime === null) {
+    return;
+  }
+  agents.setLoading(true);
+  try {
+    const list = await runtime.listAgents();
+    agents.reduceList(list);
+  } catch (error) {
+    agents.setError(error instanceof Error ? error.message : String(error));
+  } finally {
+    agents.setLoading(false);
+    broadcastToAll(IpcChannels.agents.updated, agents.current);
+  }
+}
+
+// toggleAgent applies a dashboard enable/disable toggle: it persists the
+// intent locally (authoritative for what the dashboard renders), pushes the
+// updated snapshot to every window, then drives the runtime's agent.start /
+// agent.stop lifecycle as a best-effort control — runtime failures are logged,
+// never reported as a local toggle failure, so the desktop stays consistent
+// even when the core runtime has no LifecycleManager wired.
+async function toggleAgent(patch: AgentEnabledPatch): Promise<IpcResult<AgentEnabledPatch>> {
+  const store = agentStore;
+  if (store === null) {
+    return fail("AGENT_STORE_UNAVAILABLE", "agent store is not initialized");
+  }
+  const persisted = store.set(patch.id, patch.enabled);
+  if (!persisted.ok) {
+    return persisted;
+  }
+  agents.setEnabled(patch.id, patch.enabled);
+  broadcastToAll(IpcChannels.agents.updated, agents.current);
+  const runtime = runtimeClient;
+  if (runtime !== null) {
+    try {
+      const result = await runtime.setAgentEnabled(patch.id, patch.enabled);
+      if (!result.ok) {
+        console.error(
+          `[agents] ${patch.enabled ? "enable" : "disable"} ${patch.id} not applied by runtime: ${result.error?.code}: ${result.error?.message}`,
+        );
+      }
+    } catch (error) {
+      console.error(`[agents] runtime control error for ${patch.id}`, error);
+    }
+  }
+  return persisted;
+}
+
 function createRuntimeClient(): RuntimeClient {
   return new RuntimeClient({
     handlers: {
@@ -197,6 +316,11 @@ function createRuntimeClient(): RuntimeClient {
         console.error(`[runtime] error: ${error.code}: ${error.message}`);
       },
       onStateChanged: (state) => {
+        if (state === "connected") {
+          // Prime the SPEC-0070 dashboard as soon as the bridge is up.
+          void refreshAgents();
+          return;
+        }
         if (state === "disconnected") {
           forwardToRenderer(IpcChannels.runtime.statusChanged, runtimeOfflineStatus());
         }
@@ -207,7 +331,8 @@ function createRuntimeClient(): RuntimeClient {
 
 app.whenReady().then(() => {
   runtimeClient = createRuntimeClient();
-  registerIpcHandlers(ipcMain, runtimeClient, createSettingsStore());
+  registerIpcHandlers(ipcMain, runtimeClient, createSettingsStore(), agents, toggleAgent);
+  createAgentStore();
   runtimeClient.connect();
 
   createWindow();
@@ -216,6 +341,7 @@ app.whenReady().then(() => {
     tray = createJarvisTray({
       open: showMainWindow,
       settings: showSettingsWindow,
+      agents: showAgentsWindow,
       voice: () => {
         void toggleVoiceMode();
       },

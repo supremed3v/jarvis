@@ -274,6 +274,85 @@ test("startVoice rejects a malformed voice.result", async () => {
   client.disconnect();
 });
 
+test("listAgents sends agents.list and resolves on the matching agents.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.listAgents();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "agents.list");
+  assert.strictEqual(typeof sent.id, "string");
+
+  socket().serverPush({
+    type: "agents.result",
+    id: sent.id,
+    payload: { agents: [{ id: "core-agent", name: "Core Agent", status: "running" }] },
+  });
+  assert.deepStrictEqual(await promise, {
+    agents: [{ id: "core-agent", name: "Core Agent", status: "running" }],
+  });
+  client.disconnect();
+});
+
+test("listAgents rejects when the client is not connected", async () => {
+  const { client } = makeClient();
+  client.connect();
+  await assert.rejects(client.listAgents(), (error: { code?: string }) => error.code === "NOT_CONNECTED");
+  client.disconnect();
+});
+
+test("setAgentEnabled sends agent.start on enable and resolves on agent.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.setAgentEnabled("core-agent", true);
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "agent.start");
+  assert.deepStrictEqual(sent.payload, { id: "core-agent" });
+  assert.strictEqual(typeof sent.id, "string");
+
+  socket().serverPush({ type: "agent.result", id: sent.id, payload: { id: "core-agent", ok: true } });
+  assert.deepStrictEqual(await promise, { id: "core-agent", ok: true });
+  client.disconnect();
+});
+
+test("setAgentEnabled sends agent.stop on disable and returns a runtime failure without throwing", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.setAgentEnabled("core-agent", false);
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "agent.stop");
+  assert.deepStrictEqual(sent.payload, { id: "core-agent" });
+
+  socket().serverPush({
+    type: "agent.result",
+    id: sent.id,
+    payload: { id: "core-agent", ok: false, error: { code: "AGENT_LIFECYCLE_DISABLED", message: "no manager" } },
+  });
+  assert.deepStrictEqual(await promise, {
+    id: "core-agent",
+    ok: false,
+    error: { code: "AGENT_LIFECYCLE_DISABLED", message: "no manager" },
+  });
+  client.disconnect();
+});
+
+test("setAgentEnabled rejects a malformed agent.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.setAgentEnabled("core-agent", true);
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  socket().serverPush({ type: "agent.result", id: sent.id, payload: { ok: "yes" } });
+  await assert.rejects(promise, (error: { code?: string }) => error.code === "INVALID_AGENT_RESULT");
+  client.disconnect();
+});
+
 test("stream frames drive stream and result handlers", () => {
   const { client, socket, chunks, results } = makeClient();
   client.connect();

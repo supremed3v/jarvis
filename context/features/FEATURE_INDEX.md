@@ -1191,7 +1191,7 @@ SPEC-0070-agent-management-dashboard.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

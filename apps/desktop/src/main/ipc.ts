@@ -4,19 +4,28 @@ import {
   assertIpcChannel,
   fail,
   ok,
+  validateAgentEnabledPatch,
   validateToolApprovalResponse,
   validateUserCommand,
+  type AgentEnabledPatch,
   type CommandCancelResult,
   type IpcResult,
   type RuntimeStatus,
   type ToolApprovalResult,
   type UserCommandResult,
 } from "../shared/ipc";
+import type { AgentDashboardState, AgentUiStore } from "../shared/agents";
 import type { Settings, SettingsPatch } from "../shared/settings";
 import type { RuntimeClient } from "./runtimeClient";
 import type { SettingsStore } from "./settingsStore";
 
-export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient, settings: SettingsStore): void {
+export function registerIpcHandlers(
+  ipc: IpcMain,
+  runtime: RuntimeClient,
+  settings: SettingsStore,
+  agents: AgentUiStore,
+  toggleAgent: (patch: AgentEnabledPatch) => Promise<IpcResult<AgentEnabledPatch>>,
+): void {
   ipc.handle(assertIpcChannel(IpcChannels.runtime.ping), () => ok("pong"));
 
   ipc.handle(assertIpcChannel(IpcChannels.runtime.getStatus), async (): Promise<IpcResult<RuntimeStatus>> => {
@@ -63,6 +72,23 @@ export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient, settin
     }
     return settings.update(payload as SettingsPatch);
   });
+
+  // jarvis:agents:list returns the dashboard snapshot the main process keeps
+  // current (SPEC-0070). jarvis:agents:set-enabled validates the toggle and
+  // hands it to the main-process toggleAgent orchestration (persist locally,
+  // drive the runtime's lifecycle best-effort), which reports back the result.
+  ipc.handle(assertIpcChannel(IpcChannels.agents.list), (): IpcResult<AgentDashboardState> => ok(agents.current));
+
+  ipc.handle(
+    assertIpcChannel(IpcChannels.agents.setEnabled),
+    async (_event, payload: unknown): Promise<IpcResult<AgentEnabledPatch>> => {
+      const result = validateAgentEnabledPatch(payload);
+      if (!result.ok) {
+        return result;
+      }
+      return toggleAgent(result.data);
+    },
+  );
 }
 
 export function broadcast(win: BrowserWindow, channel: string, payload: unknown): void {

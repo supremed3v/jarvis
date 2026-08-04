@@ -268,14 +268,25 @@ func TestBridgeCommandCancelUnknown(t *testing.T) {
 	}
 }
 
-// fakeAgent is a minimal SPEC-0018 Agent returning a fixed result.
+// fakeAgent is a minimal SPEC-0018 Agent returning a fixed result. tools,
+// perms, and memory optionally fill the Metadata the AgentView exposes.
 type fakeAgent struct {
-	id    string
-	delay time.Duration
+	id     string
+	delay  time.Duration
+	tools  []string
+	perms  []string
+	memory []string
 }
 
 func (f *fakeAgent) Metadata() AgentMetadata {
-	return AgentMetadata{ID: f.id, Name: f.id, Description: "test agent"}
+	return AgentMetadata{
+		ID:           f.id,
+		Name:         f.id,
+		Description:  "test agent",
+		Tools:        f.tools,
+		Permissions:  f.perms,
+		MemoryAccess: f.memory,
+	}
 }
 
 func (f *fakeAgent) Execute(ctx context.Context, task *types.Task) (map[string]any, error) {
@@ -610,6 +621,235 @@ func TestBridgeVoiceControlFailure(t *testing.T) {
 	errorPayload, _ := frame.Payload["error"].(map[string]any)
 	if errorPayload["code"] != "VOICE_START_FAILED" {
 		t.Fatalf("voice.result error code = %v, want VOICE_START_FAILED", errorPayload["code"])
+	}
+}
+
+// readAgentResult reads an agent.result frame, asserts its echoed id and ok
+// flag, and returns the frame so the caller can inspect the error.
+func (c *testClient) readAgentResult(id string, wantOK bool) bridgeFrame {
+	c.t.Helper()
+	frame := c.readType(frameAgentResult)
+	if id != "" && frame.ID != id {
+		c.t.Fatalf("agent.result id = %q, want %q", frame.ID, id)
+	}
+	if frame.Payload["ok"] != wantOK {
+		c.t.Fatalf("agent.result ok = %v, want %v (payload %v)", frame.Payload["ok"], wantOK, frame.Payload)
+	}
+	return frame
+}
+
+// decodeAgentViews decodes the agents array of an agents.result frame.
+func decodeAgentViews(t *testing.T, frame bridgeFrame) []AgentView {
+	t.Helper()
+	raw, ok := frame.Payload["agents"].([]any)
+	if !ok {
+		t.Fatalf("agents.result payload missing agents array: %v", frame.Payload)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal agents: %v", err)
+	}
+	var views []AgentView
+	if err := json.Unmarshal(data, &views); err != nil {
+		t.Fatalf("unmarshal agents: %v", err)
+	}
+	return views
+}
+
+func TestBridgeAgentsListEmpty(t *testing.T) {
+	b := NewBridge(WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentsList, ID: "a1"})
+	frame := c.readType(frameAgentsResult)
+	if frame.ID != "a1" {
+		t.Fatalf("agents.result id = %q, want a1", frame.ID)
+	}
+	if views := decodeAgentViews(t, frame); len(views) != 0 {
+		t.Fatalf("agents = %v, want empty list", views)
+	}
+}
+
+func TestBridgeAgentsListWithRegistry(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(&fakeAgent{
+		id: "core-agent", tools: []string{"filesystem.read", "terminal.execute"}, perms: []string{"terminal.execute"}, memory: []string{"conversation"},
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+
+	b := NewBridge(WithBridgeAgentRegistry(registry, "core-agent"), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentsList, ID: "a1"})
+	views := decodeAgentViews(t, c.readType(frameAgentsResult))
+
+	if len(views) != 1 {
+		t.Fatalf("agents = %v, want 1 view", views)
+	}
+	v := views[0]
+	if v.ID != "core-agent" || v.Name != "core-agent" || v.Description != "test agent" {
+		t.Fatalf("view = %+v, want id/name core-agent with description", v)
+	}
+	if !slicesEqual(v.Capabilities, []string{"filesystem.read", "terminal.execute"}) {
+		t.Fatalf("capabilities = %v, want filesystem.read + terminal.execute", v.Capabilities)
+	}
+	if !slicesEqual(v.Permissions, []string{"terminal.execute"}) {
+		t.Fatalf("permissions = %v, want terminal.execute", v.Permissions)
+	}
+	if !slicesEqual(v.MemoryAccess, []string{"conversation"}) {
+		t.Fatalf("memoryAccess = %v, want conversation", v.MemoryAccess)
+	}
+	if v.Status != string(types.AgentStatusRegistered) {
+		t.Fatalf("status = %q, want %q (no lifecycle wired)", v.Status, types.AgentStatusRegistered)
+	}
+}
+
+func TestBridgeAgentsListWithLifecycleStatus(t *testing.T) {
+	registry := NewRegistry()
+	lifecycle := NewLifecycleManager(registry)
+	agent := &fakeAgent{id: "core-agent", tools: []string{"filesystem.read"}}
+	if err := lifecycle.Register(agent); err != nil {
+		t.Fatalf("lifecycle register: %v", err)
+	}
+	if err := lifecycle.Initialize(context.Background(), "core-agent"); err != nil {
+		t.Fatalf("lifecycle initialize: %v", err)
+	}
+
+	b := NewBridge(
+		WithBridgeAgentRegistry(registry, "core-agent"),
+		WithBridgeLifecycleManager(lifecycle),
+		WithBridgeLogger(logger.New("test")),
+	)
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentsList, ID: "a1"})
+	views := decodeAgentViews(t, c.readType(frameAgentsResult))
+
+	if len(views) != 1 {
+		t.Fatalf("agents = %v, want 1 view", views)
+	}
+	if views[0].Status != string(types.AgentStatusReady) {
+		t.Fatalf("status = %q, want %q", views[0].Status, types.AgentStatusReady)
+	}
+}
+
+func TestBridgeAgentEnableDisableLifecycle(t *testing.T) {
+	registry := NewRegistry()
+	lifecycle := NewLifecycleManager(registry)
+	agent := &fakeAgent{id: "core-agent"}
+	if err := lifecycle.Register(agent); err != nil {
+		t.Fatalf("lifecycle register: %v", err)
+	}
+
+	b := NewBridge(
+		WithBridgeAgentRegistry(registry, "core-agent"),
+		WithBridgeLifecycleManager(lifecycle),
+		WithBridgeLogger(logger.New("test")),
+	)
+	c := dialTestBridge(t, b)
+
+	// Enable from REGISTERED initializes the agent (-> READY).
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e1", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("e1", true)
+	if state, _ := lifecycle.State("core-agent"); state != types.AgentStatusReady {
+		t.Fatalf("state after first start = %q, want ready", state)
+	}
+
+	// Enable again from READY starts it (-> RUNNING).
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e2", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("e2", true)
+	if state, _ := lifecycle.State("core-agent"); state != types.AgentStatusRunning {
+		t.Fatalf("state after second start = %q, want running", state)
+	}
+
+	// Disable stops it (-> STOPPED).
+	c.send(bridgeFrame{Type: frameAgentStop, ID: "d1", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("d1", true)
+	if state, _ := lifecycle.State("core-agent"); state != types.AgentStatusStopped {
+		t.Fatalf("state after stop = %q, want stopped", state)
+	}
+
+	// A stopped agent is terminal in SPEC-0021: enabling again is rejected.
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e3", Payload: map[string]any{"id": "core-agent"}})
+	frame := c.readAgentResult("e3", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "AGENT_LIFECYCLE_INVALID_TRANSITION" {
+		t.Fatalf("re-enable error code = %v, want AGENT_LIFECYCLE_INVALID_TRANSITION", code)
+	}
+}
+
+func TestBridgeAgentDisableIsIdempotent(t *testing.T) {
+	registry := NewRegistry()
+	lifecycle := NewLifecycleManager(registry)
+	if err := lifecycle.Register(&fakeAgent{id: "core-agent"}); err != nil {
+		t.Fatalf("lifecycle register: %v", err)
+	}
+
+	b := NewBridge(
+		WithBridgeAgentRegistry(registry, "core-agent"),
+		WithBridgeLifecycleManager(lifecycle),
+		WithBridgeLogger(logger.New("test")),
+	)
+	c := dialTestBridge(t, b)
+
+	// A REGISTERED (never-enabled) agent disables as a no-op success.
+	c.send(bridgeFrame{Type: frameAgentStop, ID: "d0", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("d0", true)
+	if state, _ := lifecycle.State("core-agent"); state != types.AgentStatusRegistered {
+		t.Fatalf("state = %q, want registered (unchanged by no-op disable)", state)
+	}
+
+	// Disabling twice is also a success (already stopped).
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e1", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("e1", true)
+	c.send(bridgeFrame{Type: frameAgentStop, ID: "d1", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("d1", true)
+	c.send(bridgeFrame{Type: frameAgentStop, ID: "d2", Payload: map[string]any{"id": "core-agent"}})
+	c.readAgentResult("d2", true)
+}
+
+func TestBridgeAgentControlLifecycleDisabled(t *testing.T) {
+	b := NewBridge(WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e1", Payload: map[string]any{"id": "core-agent"}})
+	frame := c.readAgentResult("e1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "AGENT_LIFECYCLE_DISABLED" {
+		t.Fatalf("error code = %v, want AGENT_LIFECYCLE_DISABLED", code)
+	}
+}
+
+func TestBridgeAgentControlInvalidId(t *testing.T) {
+	registry := NewRegistry()
+	lifecycle := NewLifecycleManager(registry)
+	b := NewBridge(
+		WithBridgeAgentRegistry(registry, "core-agent"),
+		WithBridgeLifecycleManager(lifecycle),
+		WithBridgeLogger(logger.New("test")),
+	)
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e1", Payload: map[string]any{}})
+	frame := c.readAgentResult("e1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_AGENT_ID" {
+		t.Fatalf("error code = %v, want INVALID_AGENT_ID", code)
+	}
+}
+
+func TestBridgeAgentControlUnknownAgent(t *testing.T) {
+	registry := NewRegistry()
+	lifecycle := NewLifecycleManager(registry)
+	b := NewBridge(
+		WithBridgeAgentRegistry(registry, "core-agent"),
+		WithBridgeLifecycleManager(lifecycle),
+		WithBridgeLogger(logger.New("test")),
+	)
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameAgentStart, ID: "e1", Payload: map[string]any{"id": "ghost"}})
+	frame := c.readAgentResult("e1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "AGENT_LIFECYCLE_NOT_REGISTERED" {
+		t.Fatalf("error code = %v, want AGENT_LIFECYCLE_NOT_REGISTERED", code)
 	}
 }
 

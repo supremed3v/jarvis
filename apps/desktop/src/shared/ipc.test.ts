@@ -5,6 +5,7 @@ import {
   IpcChannels,
   assertIpcChannel,
   isIpcChannel,
+  validateAgentEnabledPatch,
   validateToolApprovalResponse,
   validateUserCommand,
 } from "./ipc";
@@ -82,6 +83,35 @@ test("validateToolApprovalResponse rejects missing id or non-boolean approved", 
     { id: "a" },
   ]) {
     const result = validateToolApprovalResponse(payload);
+    assert.strictEqual(result.ok, false, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("validateAgentEnabledPatch accepts valid toggles", () => {
+  for (const payload of [
+    { id: "core-agent", enabled: true },
+    { id: "core-agent", enabled: false },
+  ]) {
+    const result = validateAgentEnabledPatch(payload);
+    assert.strictEqual(result.ok, true, `expected ${JSON.stringify(payload)} to be accepted`);
+    if (result.ok) {
+      assert.deepStrictEqual(result.data, payload);
+    }
+  }
+});
+
+test("validateAgentEnabledPatch rejects missing id or non-boolean enabled", () => {
+  for (const payload of [
+    null,
+    42,
+    {},
+    { id: "", enabled: true },
+    { id: "a" },
+    { enabled: true },
+    { id: "a", enabled: "yes" },
+    { id: 7, enabled: true },
+  ]) {
+    const result = validateAgentEnabledPatch(payload);
     assert.strictEqual(result.ok, false, `expected ${JSON.stringify(payload)} to be rejected`);
   }
 });
