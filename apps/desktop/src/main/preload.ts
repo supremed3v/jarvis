@@ -4,6 +4,10 @@ import type {
   CommandCancelResult,
   IpcResult,
   JarvisBridge,
+  MemoryDeleteRequest,
+  MemoryListRequest,
+  MemorySearchRequest,
+  MemoryUpdateRequest,
   RuntimeStatus,
   ToolApprovalRequest,
   ToolApprovalResponse,
@@ -15,6 +19,7 @@ import type { CommandResult, RuntimeEvent, StreamChunk } from "../shared/runtime
 import type { Settings, SettingsPatch } from "../shared/settings";
 import type { VoiceUiSnapshot } from "../shared/voice";
 import type { AgentDashboardState } from "../shared/agents";
+import type { MemoryViewerState } from "../shared/memory";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
 // local modules (Electron docs, Process Sandboxing), so channel names are
@@ -38,6 +43,11 @@ const CHANNEL = {
   agentsList: "jarvis:agents:list",
   agentsSetEnabled: "jarvis:agents:set-enabled",
   agentsUpdated: "jarvis:agents:updated",
+  memoryList: "jarvis:memory:list",
+  memorySearch: "jarvis:memory:search",
+  memoryUpdate: "jarvis:memory:update",
+  memoryDelete: "jarvis:memory:delete",
+  memoryUpdated: "jarvis:memory:updated",
 } as const;
 
 function invoke<T>(channel: string, payload?: unknown): Promise<IpcResult<T>> {
@@ -113,6 +123,19 @@ const bridge: JarvisBridge = {
       invoke<AgentEnabledPatch>(CHANNEL.agentsSetEnabled, patch),
     onUpdated: (cb: (snapshot: AgentDashboardState) => void): (() => void) =>
       subscribe<AgentDashboardState>(CHANNEL.agentsUpdated, cb),
+  },
+
+  memory: {
+    list: (request?: MemoryListRequest): Promise<IpcResult<MemoryViewerState>> =>
+      invoke<MemoryViewerState>(CHANNEL.memoryList, request),
+    search: (request: MemorySearchRequest): Promise<IpcResult<MemoryViewerState>> =>
+      invoke<MemoryViewerState>(CHANNEL.memorySearch, request),
+    update: (request: MemoryUpdateRequest): Promise<IpcResult<MemoryUpdateRequest>> =>
+      invoke<MemoryUpdateRequest>(CHANNEL.memoryUpdate, request),
+    delete: (request: MemoryDeleteRequest): Promise<IpcResult<MemoryDeleteRequest>> =>
+      invoke<MemoryDeleteRequest>(CHANNEL.memoryDelete, request),
+    onUpdated: (cb: (snapshot: MemoryViewerState) => void): (() => void) =>
+      subscribe<MemoryViewerState>(CHANNEL.memoryUpdated, cb),
   },
 };
 

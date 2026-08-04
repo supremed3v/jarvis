@@ -84,13 +84,14 @@ const (
 )
 
 // Wire frame types, shared by both directions. Client-to-server frames
-// (ping, get_status, command.submit, command.cancel,
-// tool.approval_response, voice.start, voice.stop) carry a client-generated
-// id the server echoes in every frame it sends in reply. Server-to-client
-// frames (pong, status, status.changed, event, command.stream,
-// command.result, tool.approval_requested, voice.result, error) are the
-// transport half of the same domains SPEC-0064's renderer IPC channels
-// already define.
+// (ping, get_status, command.submit, command.cancel, tool.approval_response,
+// voice.start, voice.stop, agents.list, agent.start, agent.stop,
+// memory.list, memory.search, memory.update, memory.delete) carry a
+// client-generated id the server echoes in every frame it sends in reply.
+// Server-to-client frames (pong, status, status.changed, event,
+// command.stream, command.result, tool.approval_requested, voice.result,
+// agents.result, agent.result, memory.result, error) are the transport half
+// of the same domains SPEC-0064's renderer IPC channels already define.
 const (
 	framePing                 = "ping"
 	frameGetStatus            = "get_status"
@@ -102,6 +103,10 @@ const (
 	frameAgentsList           = "agents.list"
 	frameAgentStart           = "agent.start"
 	frameAgentStop            = "agent.stop"
+	frameMemoryList           = "memory.list"
+	frameMemorySearch         = "memory.search"
+	frameMemoryUpdate         = "memory.update"
+	frameMemoryDelete         = "memory.delete"
 
 	framePong                  = "pong"
 	frameStatus                = "status"
@@ -113,6 +118,7 @@ const (
 	frameVoiceResult           = "voice.result"
 	frameAgentsResult          = "agents.result"
 	frameAgentResult           = "agent.result"
+	frameMemoryResult          = "memory.result"
 	frameError                 = "error"
 )
 
@@ -164,6 +170,19 @@ type AgentView struct {
 	Permissions  []string `json:"permissions,omitempty"`
 	MemoryAccess []string `json:"memoryAccess,omitempty"`
 	Status       string   `json:"status"`
+}
+
+// MemoryEntry is one memory record as the SPEC-0071 Memory Viewer renders it:
+// the SPEC-0034 MemoryRecord's fields plus the decoded metadata the UI shows.
+// MemoryRecord itself has no JSON tags, so this view mirrors its shape for the
+// wire (matching the AgentView precedent).
+type MemoryEntry struct {
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Content   string         `json:"content"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
 }
 
 // CommandHandler processes a single Command and returns its complete result
@@ -256,6 +275,7 @@ type Bridge struct {
 	defaultAgent     string
 	approvals        *ApprovalQueue
 	voice            VoiceSessionManager
+	memory           MemoryViewer
 
 	mu          sync.Mutex
 	state       string
@@ -352,6 +372,16 @@ func WithBridgeVoiceSessionManager(m VoiceSessionManager) BridgeOption {
 // agent.start / agent.stop with an AGENT_LIFECYCLE_DISABLED error.
 func WithBridgeLifecycleManager(m *LifecycleManager) BridgeOption {
 	return func(b *Bridge) { b.lifecycle = m }
+}
+
+// WithBridgeMemory wires the SPEC-0071 MemoryViewer so "memory.list" /
+// "memory.search" / "memory.update" / "memory.delete" frames (the Memory
+// Viewer UI's data source) read and mutate the runtime's memory. Optional; a
+// Bridge without one answers memory.list with an empty list (a runtime with
+// no memory viewer is a valid state, mirroring agents.list) and the other
+// memory frames with a MEMORY_DISABLED error.
+func WithBridgeMemory(m MemoryViewer) BridgeOption {
+	return func(b *Bridge) { b.memory = m }
 }
 
 // NewBridge creates a ready-to-use Bridge. All slots are optional and set
@@ -658,6 +688,14 @@ func (b *Bridge) handleFrame(c *wsClient, frame bridgeFrame) {
 		b.handleAgentControl(c, frame, true)
 	case frameAgentStop:
 		b.handleAgentControl(c, frame, false)
+	case frameMemoryList:
+		b.handleMemoryList(c, frame)
+	case frameMemorySearch:
+		b.handleMemorySearch(c, frame)
+	case frameMemoryUpdate:
+		b.handleMemoryUpdate(c, frame)
+	case frameMemoryDelete:
+		b.handleMemoryDelete(c, frame)
 	default:
 		c.send(bridgeFrame{Type: frameError, ID: frame.ID, Payload: map[string]any{
 			"error": map[string]any{"code": "UNKNOWN_FRAME_TYPE", "message": "unknown frame type: " + frame.Type},
@@ -1068,6 +1106,239 @@ func (b *Bridge) disableAgent(id string) error {
 		return b.lifecycle.Stop(context.Background(), id)
 	default:
 		return nil
+	}
+}
+
+// handleMemoryList processes a memory.list frame by replying with a
+// memory.result frame carrying the MemoryEntry of every record the wired
+// MemoryViewer lists (SPEC-0071's "memories load correctly" data source),
+// optionally scoped to one MemoryType via the "type" payload field. A Bridge
+// with no MemoryViewer wired replies with an empty list - a runtime with no
+// memory viewer is a valid state, not an error.
+func (b *Bridge) handleMemoryList(c *wsClient, frame bridgeFrame) {
+	typ, ok := memoryTypeField(frame.Payload)
+	if !ok {
+		b.sendMemoryInvalidType(c, frame)
+		return
+	}
+	entries, err := b.listMemories(typ)
+	if err != nil {
+		b.sendMemoryError(c, frame, "MEMORY_LIST_FAILED", err)
+		return
+	}
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"memories": entries,
+	}})
+}
+
+// listMemories asks the wired MemoryViewer for every record of type typ (all
+// types when typ is empty), returning an empty list when no viewer is wired.
+func (b *Bridge) listMemories(typ MemoryType) ([]MemoryEntry, error) {
+	if b.memory == nil {
+		return []MemoryEntry{}, nil
+	}
+	records, err := b.memory.List(context.Background(), typ)
+	if err != nil {
+		return nil, err
+	}
+	return memoryEntries(records), nil
+}
+
+// handleMemorySearch processes a memory.search frame: it validates the query
+// payload, asks the wired MemoryViewer to search, and replies with a
+// memory.result frame carrying the matching MemoryEntries. Without a wired
+// viewer it replies ok:false with a MEMORY_DISABLED error.
+func (b *Bridge) handleMemorySearch(c *wsClient, frame bridgeFrame) {
+	if b.memory == nil {
+		b.sendMemoryDisabled(c, frame)
+		return
+	}
+	query, _ := frame.Payload["query"].(string)
+	if strings.TrimSpace(query) == "" {
+		c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_MEMORY_QUERY",
+				"message": "memory search requires a non-empty query",
+			},
+		}})
+		return
+	}
+	q := MemoryQuery{Query: strings.TrimSpace(query)}
+	if typ, ok := memoryTypeField(frame.Payload); ok {
+		if typ != "" {
+			q.Type = typ
+		}
+	} else {
+		c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_MEMORY_TYPE",
+				"message": "memory search requires a known memory type when one is given",
+			},
+		}})
+		return
+	}
+	if limit, ok := intField(frame.Payload, "limit"); ok && limit > 0 {
+		q.Limit = limit
+	}
+	records, err := b.memory.Search(context.Background(), q)
+	if err != nil {
+		b.sendMemoryError(c, frame, "MEMORY_SEARCH_FAILED", err)
+		return
+	}
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"memories": memoryEntries(records),
+	}})
+}
+
+// handleMemoryUpdate processes a memory.update frame (SPEC-0071's "editing
+// where allowed"): it validates the id/content payload, asks the wired
+// MemoryViewer to replace the record's content, and replies with a
+// synchronous memory.result ack. Without a wired viewer it replies ok:false
+// with a MEMORY_DISABLED error.
+func (b *Bridge) handleMemoryUpdate(c *wsClient, frame bridgeFrame) {
+	if b.memory == nil {
+		b.sendMemoryDisabled(c, frame)
+		return
+	}
+	id, _ := frame.Payload["id"].(string)
+	if id == "" {
+		c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_MEMORY_ID",
+				"message": "memory update requires a non-empty id",
+			},
+		}})
+		return
+	}
+	content, _ := frame.Payload["content"].(string)
+	if strings.TrimSpace(content) == "" {
+		c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_MEMORY_CONTENT",
+				"message": "memory update requires non-empty content",
+			},
+		}})
+		return
+	}
+	if err := b.memory.Update(context.Background(), MemoryRecord{ID: id, Content: content}); err != nil {
+		b.sendMemoryError(c, frame, "MEMORY_UPDATE_FAILED", err)
+		return
+	}
+	b.logf("bridge memory update", map[string]any{"memoryId": id})
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"id": id, "ok": true,
+	}})
+}
+
+// handleMemoryDelete processes a memory.delete frame (SPEC-0071's deletion
+// support): it validates the id payload, asks the wired MemoryViewer to
+// remove the record, and replies with a synchronous memory.result ack. Without
+// a wired viewer it replies ok:false with a MEMORY_DISABLED error.
+func (b *Bridge) handleMemoryDelete(c *wsClient, frame bridgeFrame) {
+	if b.memory == nil {
+		b.sendMemoryDisabled(c, frame)
+		return
+	}
+	id, _ := frame.Payload["id"].(string)
+	if id == "" {
+		c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code":    "INVALID_MEMORY_ID",
+				"message": "memory delete requires a non-empty id",
+			},
+		}})
+		return
+	}
+	if err := b.memory.Delete(context.Background(), id); err != nil {
+		b.sendMemoryError(c, frame, "MEMORY_DELETE_FAILED", err)
+		return
+	}
+	b.logf("bridge memory delete", map[string]any{"memoryId": id})
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"id": id, "ok": true,
+	}})
+}
+
+// sendMemoryDisabled replies to a memory frame with the MEMORY_DISABLED error
+// a Bridge emits when no MemoryViewer is wired.
+func (b *Bridge) sendMemoryDisabled(c *wsClient, frame bridgeFrame) {
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"code":    "MEMORY_DISABLED",
+			"message": "no memory viewer is configured on the bridge",
+		},
+	}})
+}
+
+// sendMemoryInvalidType replies to a memory frame whose "type" payload is not
+// a known MemoryType.
+func (b *Bridge) sendMemoryInvalidType(c *wsClient, frame bridgeFrame) {
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"code":    "INVALID_MEMORY_TYPE",
+			"message": "memory frame requires a known memory type when one is given",
+		},
+	}})
+}
+
+// sendMemoryError replies to a memory frame whose MemoryViewer call failed,
+// propagating the failure's typed code (packages/errors) when there is one.
+func (b *Bridge) sendMemoryError(c *wsClient, frame bridgeFrame, defaultCode string, err error) {
+	fe := bridgeError{Code: defaultCode, Message: err.Error()}
+	if e, ok := err.(*errors.Error); ok {
+		fe.Code = e.Code
+		fe.Message = e.Message
+	}
+	c.send(bridgeFrame{Type: frameMemoryResult, ID: frame.ID, Payload: map[string]any{
+		"ok": false, "error": fe,
+	}})
+}
+
+// memoryEntries maps SPEC-0034 MemoryRecords onto the wire's MemoryEntry view.
+func memoryEntries(records []MemoryRecord) []MemoryEntry {
+	entries := make([]MemoryEntry, 0, len(records))
+	for _, rec := range records {
+		entries = append(entries, MemoryEntry{
+			ID:        rec.ID,
+			Type:      string(rec.Type),
+			Content:   rec.Content,
+			Metadata:  rec.Metadata,
+			CreatedAt: rec.CreatedAt,
+			UpdatedAt: rec.UpdatedAt,
+		})
+	}
+	return entries
+}
+
+// memoryTypeField reads the optional "type" payload field: an absent or empty
+// value means "all types" (returned as ("", true)); a present value must be a
+// known MemoryType or the field is invalid ((MemoryType, false)).
+func memoryTypeField(payload map[string]any) (MemoryType, bool) {
+	raw, ok := payload["type"].(string)
+	if !ok || raw == "" {
+		return "", true
+	}
+	t := MemoryType(raw)
+	return t, t.IsValid()
+}
+
+// intField reads an integer-typed payload field as JSON numbers unmarshal into
+// float64.
+func intField(payload map[string]any, key string) (int, bool) {
+	switch v := payload[key].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	default:
+		return 0, false
 	}
 }
 

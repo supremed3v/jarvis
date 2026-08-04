@@ -638,6 +638,332 @@ func (c *testClient) readAgentResult(id string, wantOK bool) bridgeFrame {
 	return frame
 }
 
+// readMemoryControlResult reads a memory.result frame carrying an ok field
+// (update/delete acks), asserts its echoed id and ok flag, and returns the
+// frame so the caller can inspect the error.
+func (c *testClient) readMemoryControlResult(id string, wantOK bool) bridgeFrame {
+	c.t.Helper()
+	frame := c.readType(frameMemoryResult)
+	if frame.ID != id {
+		c.t.Fatalf("memory.result id = %q, want %q", frame.ID, id)
+	}
+	if frame.Payload["ok"] != wantOK {
+		c.t.Fatalf("memory.result ok = %v, want %v (payload %v)", frame.Payload["ok"], wantOK, frame.Payload)
+	}
+	return frame
+}
+
+// decodeMemoryEntries decodes the memories array of a memory.result frame
+// (the list/search replies, which carry no ok field).
+func decodeMemoryEntries(t *testing.T, frame bridgeFrame) []MemoryEntry {
+	t.Helper()
+	raw, ok := frame.Payload["memories"].([]any)
+	if !ok {
+		t.Fatalf("memory.result payload missing memories array: %v", frame.Payload)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal memories: %v", err)
+	}
+	var entries []MemoryEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("unmarshal memories: %v", err)
+	}
+	return entries
+}
+
+// fakeMemoryViewer is a minimal SPEC-0071 MemoryViewer backed by an in-memory
+// record map, recording which records are stored so tests can assert what the
+// bridge actually read or changed.
+type fakeMemoryViewer struct {
+	mu        sync.Mutex
+	records   map[string]MemoryRecord
+	order     []string
+	listErr   error
+	searchErr error
+	updateErr error
+	deleteErr error
+}
+
+func newFakeMemoryViewer() *fakeMemoryViewer {
+	return &fakeMemoryViewer{records: make(map[string]MemoryRecord)}
+}
+
+// add stores a record under its ID in insertion order.
+func (f *fakeMemoryViewer) add(rec MemoryRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[rec.ID] = rec
+	f.order = append(f.order, rec.ID)
+}
+
+func (f *fakeMemoryViewer) get(id string) (MemoryRecord, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.records[id]
+	return rec, ok
+}
+
+func (f *fakeMemoryViewer) List(ctx context.Context, t MemoryType) ([]MemoryRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []MemoryRecord
+	for _, id := range f.order {
+		rec := f.records[id]
+		if t == "" || rec.Type == t {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeMemoryViewer) Search(ctx context.Context, q MemoryQuery) ([]MemoryRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	var out []MemoryRecord
+	for _, id := range f.order {
+		rec := f.records[id]
+		if q.Type != "" && rec.Type != q.Type {
+			continue
+		}
+		if strings.Contains(strings.ToLower(rec.Content), strings.ToLower(q.Query)) {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeMemoryViewer) Update(ctx context.Context, rec MemoryRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	stored, ok := f.records[rec.ID]
+	if !ok {
+		return pkgerrors.New(pkgerrors.TypeNotFound, "MEMORY_NOT_FOUND", "core.wsbridge_test",
+			"no memory record with id "+rec.ID)
+	}
+	stored.Content = rec.Content
+	f.records[rec.ID] = stored
+	return nil
+}
+
+func (f *fakeMemoryViewer) Delete(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	if _, ok := f.records[id]; !ok {
+		return pkgerrors.New(pkgerrors.TypeNotFound, "MEMORY_NOT_FOUND", "core.wsbridge_test",
+			"no memory record with id "+id)
+	}
+	delete(f.records, id)
+	return nil
+}
+
+func TestBridgeMemoryListEmpty(t *testing.T) {
+	b := NewBridge(WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryList, ID: "m1"})
+	frame := c.readType(frameMemoryResult)
+	if frame.ID != "m1" {
+		t.Fatalf("memory.result id = %q, want m1", frame.ID)
+	}
+	if entries := decodeMemoryEntries(t, frame); len(entries) != 0 {
+		t.Fatalf("memories = %v, want empty list", entries)
+	}
+}
+
+func TestBridgeMemoryListAllAndFiltered(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	viewer.add(MemoryRecord{ID: "local::1", Type: MemoryTypeUserProfile, Content: "prefers Go over Python"})
+	viewer.add(MemoryRecord{ID: "local::2", Type: MemoryTypeKnowledge, Content: "JARVIS architecture notes"})
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryList, ID: "m1"})
+	entries := decodeMemoryEntries(t, c.readType(frameMemoryResult))
+	if len(entries) != 2 {
+		t.Fatalf("memories = %v, want 2 entries", entries)
+	}
+	if entries[0].ID != "local::1" || entries[0].Type != string(MemoryTypeUserProfile) ||
+		entries[0].Content != "prefers Go over Python" {
+		t.Fatalf("entry[0] = %+v, want the user-profile record", entries[0])
+	}
+
+	c.send(bridgeFrame{Type: frameMemoryList, ID: "m2", Payload: map[string]any{"type": string(MemoryTypeKnowledge)}})
+	filtered := decodeMemoryEntries(t, c.readType(frameMemoryResult))
+	if len(filtered) != 1 || filtered[0].ID != "local::2" {
+		t.Fatalf("filtered = %v, want only the knowledge record", filtered)
+	}
+}
+
+func TestBridgeMemoryListInvalidType(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryList, ID: "m1", Payload: map[string]any{"type": "telepathy"}})
+	frame := c.readType(frameMemoryResult)
+	if frame.Payload["ok"] != false {
+		t.Fatalf("memory.result ok = %v, want false", frame.Payload["ok"])
+	}
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_MEMORY_TYPE" {
+		t.Fatalf("error code = %v, want INVALID_MEMORY_TYPE", code)
+	}
+}
+
+func TestBridgeMemorySearchMatchesAndTypeFilters(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	viewer.add(MemoryRecord{ID: "local::1", Type: MemoryTypeUserProfile, Content: "prefers Go over Python"})
+	viewer.add(MemoryRecord{ID: "local::2", Type: MemoryTypeKnowledge, Content: "JARVIS architecture notes"})
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemorySearch, ID: "m1", Payload: map[string]any{"query": "go"}})
+	entries := decodeMemoryEntries(t, c.readType(frameMemoryResult))
+	if len(entries) != 1 || entries[0].ID != "local::1" {
+		t.Fatalf("search 'go' = %v, want the Go preference record", entries)
+	}
+
+	c.send(bridgeFrame{
+		Type:    frameMemorySearch,
+		ID:      "m2",
+		Payload: map[string]any{"query": "architecture", "type": string(MemoryTypeKnowledge), "limit": 5},
+	})
+	scoped := decodeMemoryEntries(t, c.readType(frameMemoryResult))
+	if len(scoped) != 1 || scoped[0].ID != "local::2" {
+		t.Fatalf("scoped search = %v, want the knowledge record", scoped)
+	}
+}
+
+func TestBridgeMemorySearchInvalidQuery(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemorySearch, ID: "m1", Payload: map[string]any{"query": "  "}})
+	frame := c.readType(frameMemoryResult)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_MEMORY_QUERY" {
+		t.Fatalf("error code = %v, want INVALID_MEMORY_QUERY", code)
+	}
+}
+
+func TestBridgeMemoryControlDisabled(t *testing.T) {
+	b := NewBridge(WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	for _, frameType := range []string{frameMemorySearch, frameMemoryUpdate, frameMemoryDelete} {
+		c.send(bridgeFrame{Type: frameType, ID: "m1", Payload: map[string]any{"query": "x", "id": "a", "content": "b"}})
+		frame := c.readMemoryControlResult("m1", false)
+		if code := frame.Payload["error"].(map[string]any)["code"]; code != "MEMORY_DISABLED" {
+			t.Fatalf("%s error code = %v, want MEMORY_DISABLED", frameType, code)
+		}
+	}
+}
+
+func TestBridgeMemoryUpdateReplacesContent(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	viewer.add(MemoryRecord{ID: "local::1", Type: MemoryTypeUserProfile, Content: "old fact"})
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryUpdate, ID: "m1", Payload: map[string]any{"id": "local::1", "content": "new fact"}})
+	c.readMemoryControlResult("m1", true)
+
+	stored, ok := viewer.get("local::1")
+	if !ok || stored.Content != "new fact" {
+		t.Fatalf("stored record = %+v (ok %v), want content replaced", stored, ok)
+	}
+	if stored.Type != MemoryTypeUserProfile {
+		t.Fatalf("stored type = %q, want unchanged user_profile", stored.Type)
+	}
+}
+
+func TestBridgeMemoryUpdateInvalidPayload(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryUpdate, ID: "m1", Payload: map[string]any{"content": "x"}})
+	frame := c.readMemoryControlResult("m1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_MEMORY_ID" {
+		t.Fatalf("error code = %v, want INVALID_MEMORY_ID", code)
+	}
+
+	c.send(bridgeFrame{Type: frameMemoryUpdate, ID: "m2", Payload: map[string]any{"id": "local::1", "content": "  "}})
+	frame = c.readMemoryControlResult("m2", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_MEMORY_CONTENT" {
+		t.Fatalf("error code = %v, want INVALID_MEMORY_CONTENT", code)
+	}
+}
+
+func TestBridgeMemoryUpdateUnknownRecord(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryUpdate, ID: "m1", Payload: map[string]any{"id": "ghost", "content": "x"}})
+	frame := c.readMemoryControlResult("m1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "MEMORY_NOT_FOUND" {
+		t.Fatalf("error code = %v, want the viewer's typed MEMORY_NOT_FOUND", code)
+	}
+}
+
+func TestBridgeMemoryDeleteRemovesRecord(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	viewer.add(MemoryRecord{ID: "local::1", Type: MemoryTypeKnowledge, Content: "notes"})
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryDelete, ID: "m1", Payload: map[string]any{"id": "local::1"}})
+	c.readMemoryControlResult("m1", true)
+
+	if _, ok := viewer.get("local::1"); ok {
+		t.Fatal("record still present after delete")
+	}
+}
+
+func TestBridgeMemoryDeleteInvalidAndUnknown(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryDelete, ID: "m1", Payload: map[string]any{}})
+	frame := c.readMemoryControlResult("m1", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "INVALID_MEMORY_ID" {
+		t.Fatalf("error code = %v, want INVALID_MEMORY_ID", code)
+	}
+
+	c.send(bridgeFrame{Type: frameMemoryDelete, ID: "m2", Payload: map[string]any{"id": "ghost"}})
+	frame = c.readMemoryControlResult("m2", false)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "MEMORY_NOT_FOUND" {
+		t.Fatalf("error code = %v, want the viewer's typed MEMORY_NOT_FOUND", code)
+	}
+}
+
+func TestBridgeMemoryViewerErrorPropagation(t *testing.T) {
+	viewer := newFakeMemoryViewer()
+	viewer.listErr = pkgerrors.New(pkgerrors.TypeInternal, "MEMORY_INTERNAL", "core.wsbridge_test", "boom")
+	b := NewBridge(WithBridgeMemory(viewer), WithBridgeLogger(logger.New("test")))
+	c := dialTestBridge(t, b)
+
+	c.send(bridgeFrame{Type: frameMemoryList, ID: "m1"})
+	frame := c.readType(frameMemoryResult)
+	if code := frame.Payload["error"].(map[string]any)["code"]; code != "MEMORY_INTERNAL" {
+		t.Fatalf("error code = %v, want the viewer's typed MEMORY_INTERNAL", code)
+	}
+}
+
 // decodeAgentViews decodes the agents array of an agents.result frame.
 func decodeAgentViews(t *testing.T, frame bridgeFrame) []AgentView {
 	t.Helper()

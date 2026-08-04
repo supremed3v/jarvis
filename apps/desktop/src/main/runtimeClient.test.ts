@@ -353,6 +353,128 @@ test("setAgentEnabled rejects a malformed agent.result", async () => {
   client.disconnect();
 });
 
+test("listMemories sends memory.list and resolves on the matching memory.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.listMemories();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "memory.list");
+  assert.strictEqual(typeof sent.id, "string");
+  assert.strictEqual(sent.payload, undefined);
+
+  socket().serverPush({
+    type: "memory.result",
+    id: sent.id,
+    payload: {
+      memories: [{ id: "local::1", type: "user_profile", content: "prefers Go", createdAt: "t", updatedAt: "u" }],
+    },
+  });
+  assert.deepStrictEqual(await promise, {
+    memories: [{ id: "local::1", type: "user_profile", content: "prefers Go", createdAt: "t", updatedAt: "u" }],
+  });
+  client.disconnect();
+});
+
+test("listMemories scopes the request to a memory type", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.listMemories("knowledge");
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.deepStrictEqual(sent.payload, { type: "knowledge" });
+
+  socket().serverPush({ type: "memory.result", id: sent.id, payload: { memories: [] } });
+  assert.deepStrictEqual(await promise, { memories: [] });
+  client.disconnect();
+});
+
+test("listMemories rejects when the client is not connected", async () => {
+  const { client } = makeClient();
+  client.connect();
+  await assert.rejects(client.listMemories(), (error: { code?: string }) => error.code === "NOT_CONNECTED");
+  client.disconnect();
+});
+
+test("searchMemories sends memory.search and resolves on the matching memory.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.searchMemories("architecture", "knowledge", 5);
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "memory.search");
+  assert.deepStrictEqual(sent.payload, { query: "architecture", type: "knowledge", limit: 5 });
+
+  socket().serverPush({ type: "memory.result", id: sent.id, payload: { memories: [] } });
+  assert.deepStrictEqual(await promise, { memories: [] });
+  client.disconnect();
+});
+
+test("updateMemory sends memory.update and resolves on the matching memory.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.updateMemory("local::1", "new fact");
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "memory.update");
+  assert.deepStrictEqual(sent.payload, { id: "local::1", content: "new fact" });
+
+  socket().serverPush({ type: "memory.result", id: sent.id, payload: { id: "local::1", ok: true } });
+  assert.deepStrictEqual(await promise, { id: "local::1", ok: true });
+  client.disconnect();
+});
+
+test("updateMemory surfaces a runtime failure without throwing", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.updateMemory("local::1", "x");
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  socket().serverPush({
+    type: "memory.result",
+    id: sent.id,
+    payload: { id: "local::1", ok: false, error: { code: "MEMORY_NOT_FOUND", message: "no record" } },
+  });
+  assert.deepStrictEqual(await promise, {
+    id: "local::1",
+    ok: false,
+    error: { code: "MEMORY_NOT_FOUND", message: "no record" },
+  });
+  client.disconnect();
+});
+
+test("deleteMemory sends memory.delete and resolves on the matching memory.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.deleteMemory("local::1");
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  assert.strictEqual(sent.type, "memory.delete");
+  assert.deepStrictEqual(sent.payload, { id: "local::1" });
+
+  socket().serverPush({ type: "memory.result", id: sent.id, payload: { id: "local::1", ok: true } });
+  assert.deepStrictEqual(await promise, { id: "local::1", ok: true });
+  client.disconnect();
+});
+
+test("memory requests reject a malformed memory.result", async () => {
+  const { client, socket } = makeClient();
+  client.connect();
+  socket().open();
+
+  const promise = client.listMemories();
+  const sent = JSON.parse(socket().sent[0]) as RuntimeFrame;
+  socket().serverPush({ type: "memory.result", id: sent.id, payload: { memories: "nope" } });
+  await assert.rejects(promise, (error: { code?: string }) => error.code === "INVALID_MEMORY_RESULT");
+  client.disconnect();
+});
+
 test("stream frames drive stream and result handlers", () => {
   const { client, socket, chunks, results } = makeClient();
   client.connect();

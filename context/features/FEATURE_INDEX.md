@@ -1208,7 +1208,7 @@ SPEC-0071-memory-viewer-ui.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

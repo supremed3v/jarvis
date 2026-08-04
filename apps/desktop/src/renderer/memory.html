@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS Memory</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      font-size: 1.2rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #00d4ff;
+    }
+    .subtitle { font-size: 0.75rem; color: #777; }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .controls input[type="text"] {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      color: #e0e0e0;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .controls input[type="text"]::placeholder { color: #777; }
+    .controls input[type="text"]:focus { border-color: #00d4ff; }
+    .controls select {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #24243d;
+      color: #e0e0e0;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .controls button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #00d4ff;
+      background: transparent;
+      color: #00d4ff;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .controls button:hover { background: rgba(0, 212, 255, 0.12); }
+    .controls button:disabled { opacity: 0.5; cursor: default; }
+    .error-banner {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(255, 84, 84, 0.12);
+      border: 1px solid rgba(255, 84, 84, 0.4);
+      color: #ffb4b4;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .error-banner.visible { display: block; }
+    .empty {
+      padding: 24px;
+      text-align: center;
+      color: #999;
+      font-size: 0.9rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px dashed rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+    .memory {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .memory-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .memory-id { font-weight: 600; font-size: 0.8rem; color: #aaa; }
+    .memory-type {
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: rgba(0, 212, 255, 0.14);
+      color: #00d4ff;
+    }
+    .memory-type.conversation { background: rgba(250, 204, 21, 0.14); color: #facc15; }
+    .memory-type.knowledge { background: rgba(110, 231, 160, 0.16); color: #6ee7a0; }
+    .memory-type.experience { background: rgba(255, 255, 255, 0.08); color: #ccc; }
+    .memory-content {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .memory-meta {
+      font-size: 0.72rem;
+      color: #777;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 16px;
+    }
+    .memory-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .memory-actions button {
+      padding: 5px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: transparent;
+      color: #ccc;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .memory-actions button:hover { background: rgba(255, 255, 255, 0.08); }
+    .memory-actions button.danger { border-color: rgba(255, 84, 84, 0.5); color: #ffb4b4; }
+    .memory-actions button.danger:hover { background: rgba(255, 84, 84, 0.12); }
+    .memory-actions button.primary { border-color: #00d4ff; color: #00d4ff; }
+    .memory-actions button.primary:hover { background: rgba(0, 212, 255, 0.12); }
+    .memory-actions button:disabled { opacity: 0.5; cursor: default; }
+    .memory-edit {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .memory-edit textarea {
+      width: 100%;
+      min-height: 64px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+    }
+    .memory-edit textarea:focus { border-color: #00d4ff; }
+    .memory-edit-row { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+  <div class="page" id="page">
+    <header>
+      <h1>JARVIS Memory</h1>
+      <span class="subtitle" id="subtitle"></span>
+    </header>
+
+    <div class="controls">
+      <input type="text" id="search" placeholder="Search memory…">
+      <select id="filter">
+        <option value="">All types</option>
+        <option value="user_profile">User memories</option>
+        <option value="conversation">Conversations</option>
+        <option value="knowledge">Knowledge</option>
+        <option value="experience">Experience</option>
+      </select>
+      <button id="searchButton">Search</button>
+    </div>
+
+    <p class="error-banner" id="error"></p>
+
+    <div id="list"></div>
+  </div>
+  <script src="memoryRenderer.js"></script>
+</body>
+</html>

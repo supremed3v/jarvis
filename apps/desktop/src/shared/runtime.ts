@@ -20,6 +20,10 @@ export const RuntimeFrameType = {
   agentsList: "agents.list",
   agentStart: "agent.start",
   agentStop: "agent.stop",
+  memoryList: "memory.list",
+  memorySearch: "memory.search",
+  memoryUpdate: "memory.update",
+  memoryDelete: "memory.delete",
   pong: "pong",
   status: "status",
   statusChanged: "status.changed",
@@ -30,6 +34,7 @@ export const RuntimeFrameType = {
   voiceResult: "voice.result",
   agentsResult: "agents.result",
   agentResult: "agent.result",
+  memoryResult: "memory.result",
   error: "error",
 } as const;
 
@@ -133,6 +138,31 @@ export function frameAgentStart(id: string, agentId: string): RuntimeFrame {
 
 export function frameAgentStop(id: string, agentId: string): RuntimeFrame {
   return { type: RuntimeFrameType.agentStop, id, payload: { id: agentId } };
+}
+
+export function frameMemoryList(id: string, type?: string): RuntimeFrame {
+  return type
+    ? { type: RuntimeFrameType.memoryList, id, payload: { type } }
+    : { type: RuntimeFrameType.memoryList, id };
+}
+
+export function frameMemorySearch(id: string, query: string, type?: string, limit?: number): RuntimeFrame {
+  const payload: Record<string, unknown> = { query };
+  if (type) {
+    payload.type = type;
+  }
+  if (limit !== undefined && limit > 0) {
+    payload.limit = limit;
+  }
+  return { type: RuntimeFrameType.memorySearch, id, payload };
+}
+
+export function frameMemoryUpdate(id: string, memoryId: string, content: string): RuntimeFrame {
+  return { type: RuntimeFrameType.memoryUpdate, id, payload: { id: memoryId, content } };
+}
+
+export function frameMemoryDelete(id: string, memoryId: string): RuntimeFrame {
+  return { type: RuntimeFrameType.memoryDelete, id, payload: { id: memoryId } };
 }
 
 export type ParseFrameResult =
@@ -384,6 +414,92 @@ export function asAgentControlResult(payload: unknown): AgentControlResult | nul
     return null;
   }
   const result: AgentControlResult = { ok: payload.ok };
+  if (typeof payload.id === "string") {
+    result.id = payload.id;
+  }
+  if (isRecord(payload.error) && typeof payload.error.code === "string" && typeof payload.error.message === "string") {
+    result.error = { code: payload.error.code, message: payload.error.message };
+  }
+  return result;
+}
+
+// MemoryEntry is one memory record as the SPEC-0071 Memory Viewer renders it,
+// mirroring core.MemoryEntry (services/core/ws_bridge.go). type is the
+// SPEC-0034 MemoryType value and createdAt/updatedAt are RFC3339 strings as
+// Go's encoding/json emits time.Time.
+export interface MemoryEntry {
+  id: string;
+  type: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// MemoryListResult is the payload of a memory.result reply to memory.list /
+// memory.search: the viewer's records as MemoryEntries.
+export interface MemoryListResult {
+  memories: MemoryEntry[];
+}
+
+// MemoryControlResult is the payload of a memory.result reply to
+// memory.update / memory.delete: a synchronous ack (ok:true) or a structured
+// error.
+export interface MemoryControlResult {
+  id?: string;
+  ok: boolean;
+  error?: RuntimeError;
+}
+
+// asMemoryEntry decodes a single memory object from a memory.result payload.
+function asMemoryEntry(raw: unknown): MemoryEntry | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  if (
+    typeof raw.id !== "string" ||
+    typeof raw.type !== "string" ||
+    typeof raw.content !== "string" ||
+    typeof raw.createdAt !== "string" ||
+    typeof raw.updatedAt !== "string"
+  ) {
+    return null;
+  }
+  const entry: MemoryEntry = {
+    id: raw.id,
+    type: raw.type,
+    content: raw.content,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+  if (isRecord(raw.metadata)) {
+    entry.metadata = raw.metadata;
+  }
+  return entry;
+}
+
+// asMemoryList decodes a memory.result list/search payload.
+export function asMemoryList(payload: unknown): MemoryListResult | null {
+  if (!isRecord(payload) || !Array.isArray(payload.memories)) {
+    return null;
+  }
+  const memories: MemoryEntry[] = [];
+  for (const raw of payload.memories) {
+    const entry = asMemoryEntry(raw);
+    if (entry === null) {
+      return null;
+    }
+    memories.push(entry);
+  }
+  return { memories };
+}
+
+// asMemoryControlResult decodes a memory.result update/delete acknowledgement.
+export function asMemoryControlResult(payload: unknown): MemoryControlResult | null {
+  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+    return null;
+  }
+  const result: MemoryControlResult = { ok: payload.ok };
   if (typeof payload.id === "string") {
     result.id = payload.id;
   }

@@ -1,21 +1,33 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import * as path from "path";
 import { broadcast, registerIpcHandlers } from "./ipc";
-import { IpcChannels, fail, type AgentEnabledPatch, type IpcResult, type RuntimeStatus } from "../shared/ipc";
+import {
+  IpcChannels,
+  fail,
+  ok,
+  type AgentEnabledPatch,
+  type IpcResult,
+  type MemoryDeleteRequest,
+  type MemoryUpdateRequest,
+  type RuntimeStatus,
+} from "../shared/ipc";
 import type { Settings } from "../shared/settings";
 import { RuntimeClient } from "./runtimeClient";
 import { SettingsStore } from "./settingsStore";
 import { AgentStore } from "./agentStore";
 import { AgentUiStore } from "../shared/agents";
+import { MemoryUiStore } from "../shared/memory";
 import { VoiceUiStore, isVoiceEventType } from "../shared/voice";
 import { createJarvisTray, type JarvisTray } from "./tray";
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let agentsWindow: BrowserWindow | null = null;
+let memoryWindow: BrowserWindow | null = null;
 let runtimeClient: RuntimeClient | null = null;
 let voiceStore: VoiceUiStore = new VoiceUiStore();
 let agents: AgentUiStore = new AgentUiStore();
+let memoryStore: MemoryUiStore = new MemoryUiStore();
 let agentStore: AgentStore | null = null;
 let tray: JarvisTray | null = null;
 let voiceModeActive = false;
@@ -159,6 +171,55 @@ function showAgentsWindow(): void {
   agentsWindow.focus();
 }
 
+// createMemoryWindow opens the SPEC-0071 Memory Viewer. It is a separate
+// sandboxed BrowserWindow loading memory.html; the renderer lists, searches,
+// edits, and deletes memory records through the jarvis:memory:* IPC channels,
+// and receives fresh viewer snapshots on jarvis:memory:updated.
+function createMemoryWindow(): void {
+  memoryWindow = new BrowserWindow({
+    width: 760,
+    height: 680,
+    minWidth: 560,
+    minHeight: 420,
+    title: "JARVIS Memory",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  memoryWindow.loadFile(path.join(__dirname, "..", "renderer", "memory.html"));
+
+  memoryWindow.webContents.on("did-finish-load", () => {
+    if (memoryWindow) {
+      broadcast(memoryWindow, IpcChannels.memory.updated, memoryStore.current);
+    }
+  });
+
+  memoryWindow.once("ready-to-show", () => {
+    memoryWindow?.show();
+  });
+
+  memoryWindow.on("closed", () => {
+    memoryWindow = null;
+  });
+}
+
+function showMemoryWindow(): void {
+  if (memoryWindow === null) {
+    createMemoryWindow();
+    return;
+  }
+  if (memoryWindow.isMinimized()) {
+    memoryWindow.restore();
+  }
+  memoryWindow.show();
+  memoryWindow.focus();
+}
+
 function rebuildTray(): void {
   tray?.rebuild(voiceModeActive);
 }
@@ -284,6 +345,78 @@ async function toggleAgent(patch: AgentEnabledPatch): Promise<IpcResult<AgentEna
   return persisted;
 }
 
+// refreshMemories fetches the runtime's memory records (SPEC-0071's data
+// source), merges them into the viewer snapshot, and broadcasts the updated
+// snapshot to every open window. The runtime is authoritative for what memory
+// contains, so a refresh replaces the whole listing.
+async function refreshMemories(): Promise<void> {
+  const runtime = runtimeClient;
+  if (runtime === null) {
+    return;
+  }
+  memoryStore.setLoading(true);
+  try {
+    const list = await runtime.listMemories();
+    memoryStore.reduceList(list);
+  } catch (error) {
+    memoryStore.setError(error instanceof Error ? error.message : String(error));
+  } finally {
+    memoryStore.setLoading(false);
+    broadcastToAll(IpcChannels.memory.updated, memoryStore.current);
+  }
+}
+
+// applyMemoryUpdate drives a memory.edit on the runtime (memory.update ->
+// memory.result) and, when the runtime acknowledges it, reflects the new
+// content in the viewer snapshot and broadcasts it. A runtime rejection (or an
+// unreachable runtime) is reported to the caller as a failure, never applied
+// locally, so the viewer never shows an edit the runtime did not persist.
+async function applyMemoryUpdate(request: MemoryUpdateRequest): Promise<IpcResult<MemoryUpdateRequest>> {
+  const runtime = runtimeClient;
+  if (runtime === null) {
+    return fail("MEMORY_UNREACHABLE", "core runtime not connected");
+  }
+  try {
+    const result = await runtime.updateMemory(request.id, request.content);
+    if (!result.ok) {
+      return fail(
+        result.error?.code ?? "MEMORY_UPDATE_FAILED",
+        result.error?.message ?? "runtime rejected the memory update",
+      );
+    }
+    memoryStore.applyEdit(request.id, request.content);
+    broadcastToAll(IpcChannels.memory.updated, memoryStore.current);
+    return ok(request);
+  } catch (error) {
+    return fail("MEMORY_UPDATE_FAILED", error instanceof Error ? error.message : String(error));
+  }
+}
+
+// applyMemoryDelete drives a memory.delete on the runtime (memory.delete ->
+// memory.result) and, when the runtime acknowledges it, drops the record from
+// the viewer snapshot and broadcasts it. A runtime rejection is reported to
+// the caller, never applied locally.
+async function applyMemoryDelete(request: MemoryDeleteRequest): Promise<IpcResult<MemoryDeleteRequest>> {
+  const runtime = runtimeClient;
+  if (runtime === null) {
+    return fail("MEMORY_UNREACHABLE", "core runtime not connected");
+  }
+  try {
+    const result = await runtime.deleteMemory(request.id);
+    if (!result.ok) {
+      return fail(
+        result.error?.code ?? "MEMORY_DELETE_FAILED",
+        result.error?.message ?? "runtime rejected the memory deletion",
+      );
+    }
+    memoryStore.remove(request.id);
+    broadcastToAll(IpcChannels.memory.updated, memoryStore.current);
+    return ok(request);
+  } catch (error) {
+    return fail("MEMORY_DELETE_FAILED", error instanceof Error ? error.message : String(error));
+  }
+}
+
 function createRuntimeClient(): RuntimeClient {
   return new RuntimeClient({
     handlers: {
@@ -317,8 +450,10 @@ function createRuntimeClient(): RuntimeClient {
       },
       onStateChanged: (state) => {
         if (state === "connected") {
-          // Prime the SPEC-0070 dashboard as soon as the bridge is up.
+          // Prime the SPEC-0070 dashboard and SPEC-0071 memory viewer as soon
+          // as the bridge is up.
           void refreshAgents();
+          void refreshMemories();
           return;
         }
         if (state === "disconnected") {
@@ -331,7 +466,16 @@ function createRuntimeClient(): RuntimeClient {
 
 app.whenReady().then(() => {
   runtimeClient = createRuntimeClient();
-  registerIpcHandlers(ipcMain, runtimeClient, createSettingsStore(), agents, toggleAgent);
+  registerIpcHandlers(
+    ipcMain,
+    runtimeClient,
+    createSettingsStore(),
+    agents,
+    toggleAgent,
+    memoryStore,
+    applyMemoryUpdate,
+    applyMemoryDelete,
+  );
   createAgentStore();
   runtimeClient.connect();
 
@@ -342,6 +486,7 @@ app.whenReady().then(() => {
       open: showMainWindow,
       settings: showSettingsWindow,
       agents: showAgentsWindow,
+      memory: showMemoryWindow,
       voice: () => {
         void toggleVoiceMode();
       },

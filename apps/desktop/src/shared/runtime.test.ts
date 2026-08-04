@@ -9,6 +9,8 @@ import {
   asCommandResult,
   asErrorPayload,
   asEvent,
+  asMemoryControlResult,
+  asMemoryList,
   asStatus,
   asStreamChunk,
   asToolApprovalRequested,
@@ -19,6 +21,10 @@ import {
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
+  frameMemoryDelete,
+  frameMemoryList,
+  frameMemorySearch,
+  frameMemoryUpdate,
   framePing,
   frameSubmitCommand,
   frameVoiceStart,
@@ -271,5 +277,102 @@ test("asAgentControlResult decodes agent.result acknowledgements", () => {
   assert.deepStrictEqual(asAgentControlResult({ id: "a", ok: true, error: { code: "X" } }), { id: "a", ok: true });
   for (const payload of [null, {}, { id: "a" }, { ok: "yes" }]) {
     assert.strictEqual(asAgentControlResult(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("memory frame types are part of the protocol allowlist", () => {
+  for (const type of ["memory.list", "memory.search", "memory.update", "memory.delete", "memory.result"]) {
+    assert.strictEqual(isRuntimeFrameType(type), true, `expected ${type} to be a frame type`);
+  }
+});
+
+test("memory frame builders produce the protocol envelopes", () => {
+  assert.deepStrictEqual(frameMemoryList("m-1"), { type: "memory.list", id: "m-1" });
+  assert.deepStrictEqual(frameMemoryList("m-1", "knowledge"), {
+    type: "memory.list",
+    id: "m-1",
+    payload: { type: "knowledge" },
+  });
+  assert.deepStrictEqual(frameMemorySearch("m-1", "architecture", "knowledge", 5), {
+    type: "memory.search",
+    id: "m-1",
+    payload: { query: "architecture", type: "knowledge", limit: 5 },
+  });
+  assert.deepStrictEqual(frameMemorySearch("m-2", "go"), {
+    type: "memory.search",
+    id: "m-2",
+    payload: { query: "go" },
+  });
+  assert.deepStrictEqual(frameMemoryUpdate("m-1", "local::1", "new fact"), {
+    type: "memory.update",
+    id: "m-1",
+    payload: { id: "local::1", content: "new fact" },
+  });
+  assert.deepStrictEqual(frameMemoryDelete("m-1", "local::1"), {
+    type: "memory.delete",
+    id: "m-1",
+    payload: { id: "local::1" },
+  });
+});
+
+test("asMemoryList decodes memory.result list and search payloads", () => {
+  assert.deepStrictEqual(asMemoryList({ memories: [] }), { memories: [] });
+  assert.deepStrictEqual(
+    asMemoryList({
+      memories: [
+        {
+          id: "local::1",
+          type: "user_profile",
+          content: "prefers Go",
+          metadata: { importance: 3 },
+          createdAt: "2026-08-04T20:00:00Z",
+          updatedAt: "2026-08-04T20:00:00Z",
+        },
+      ],
+    }),
+    {
+      memories: [
+        {
+          id: "local::1",
+          type: "user_profile",
+          content: "prefers Go",
+          metadata: { importance: 3 },
+          createdAt: "2026-08-04T20:00:00Z",
+          updatedAt: "2026-08-04T20:00:00Z",
+        },
+      ],
+    },
+  );
+  // metadata is optional; the remaining fields are required.
+  assert.deepStrictEqual(
+    asMemoryList({
+      memories: [{ id: "a", type: "knowledge", content: "notes", createdAt: "t", updatedAt: "u" }],
+    }),
+    { memories: [{ id: "a", type: "knowledge", content: "notes", createdAt: "t", updatedAt: "u" }] },
+  );
+  for (const payload of [
+    null,
+    {},
+    { memories: "nope" },
+    { memories: [null] },
+    { memories: [{}] },
+    { memories: [{ id: "a", type: "knowledge", content: "x", createdAt: "t" }] },
+    { memories: [{ id: "a", type: "knowledge", content: "x", createdAt: 7, updatedAt: "u" }] },
+  ]) {
+    assert.strictEqual(asMemoryList(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
+  }
+});
+
+test("asMemoryControlResult decodes memory.result update/delete acknowledgements", () => {
+  assert.deepStrictEqual(asMemoryControlResult({ id: "local::1", ok: true }), { id: "local::1", ok: true });
+  assert.deepStrictEqual(asMemoryControlResult({ ok: true }), { ok: true });
+  assert.deepStrictEqual(
+    asMemoryControlResult({ id: "local::1", ok: false, error: { code: "MEMORY_DISABLED", message: "no viewer" } }),
+    { id: "local::1", ok: false, error: { code: "MEMORY_DISABLED", message: "no viewer" } },
+  );
+  // A malformed optional error is dropped, matching asVoiceResult.
+  assert.deepStrictEqual(asMemoryControlResult({ id: "a", ok: true, error: { code: "X" } }), { id: "a", ok: true });
+  for (const payload of [null, {}, { id: "a" }, { ok: "yes" }]) {
+    assert.strictEqual(asMemoryControlResult(payload), null, `expected ${JSON.stringify(payload)} to be rejected`);
   }
 });

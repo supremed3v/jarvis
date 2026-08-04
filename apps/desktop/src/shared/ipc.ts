@@ -2,6 +2,7 @@ import type { CommandResult, RuntimeEvent, StreamChunk } from "./runtime";
 import type { Settings, SettingsPatch } from "./settings";
 import type { VoiceUiSnapshot } from "./voice";
 import type { AgentDashboardState } from "./agents";
+import type { MemoryViewerState } from "./memory";
 
 export const IpcChannels = {
   runtime: {
@@ -32,6 +33,13 @@ export const IpcChannels = {
     list: "jarvis:agents:list",
     setEnabled: "jarvis:agents:set-enabled",
     updated: "jarvis:agents:updated",
+  },
+  memory: {
+    list: "jarvis:memory:list",
+    search: "jarvis:memory:search",
+    update: "jarvis:memory:update",
+    delete: "jarvis:memory:delete",
+    updated: "jarvis:memory:updated",
   },
 } as const;
 
@@ -157,6 +165,95 @@ export function validateToolApprovalResponse(input: unknown): IpcResult<ToolAppr
   return ok({ id: record.id, approved: record.approved });
 }
 
+// MemoryListRequest is the payload of jarvis:memory:list: an optional
+// SPEC-0034 MemoryType to scope the listing to (absent = all types).
+export interface MemoryListRequest {
+  type?: string;
+}
+
+// MemorySearchRequest is the payload of jarvis:memory:search: a non-empty
+// query, an optional MemoryType scope, and an optional result cap.
+export interface MemorySearchRequest {
+  query: string;
+  type?: string;
+  limit?: number;
+}
+
+// MemoryUpdateRequest is the payload of jarvis:memory:update: the record to
+// edit and its new content.
+export interface MemoryUpdateRequest {
+  id: string;
+  content: string;
+}
+
+// MemoryDeleteRequest is the payload of jarvis:memory:delete.
+export interface MemoryDeleteRequest {
+  id: string;
+}
+
+export function validateMemoryList(input: unknown): IpcResult<MemoryListRequest> {
+  if (typeof input !== "object" || input === null) {
+    return fail("INVALID_PAYLOAD", "Memory list request must be an object");
+  }
+  const record = input as { type?: unknown };
+  if (record.type !== undefined && typeof record.type !== "string") {
+    return fail("INVALID_MEMORY_TYPE", "Memory list request type must be a string");
+  }
+  return ok(record.type === undefined ? {} : { type: record.type });
+}
+
+export function validateMemorySearch(input: unknown): IpcResult<MemorySearchRequest> {
+  if (typeof input !== "object" || input === null) {
+    return fail("INVALID_PAYLOAD", "Memory search request must be an object");
+  }
+  const record = input as { query?: unknown; type?: unknown; limit?: unknown };
+  if (typeof record.query !== "string" || record.query.trim().length === 0) {
+    return fail("INVALID_MEMORY_QUERY", "Memory search requires a non-empty query");
+  }
+  if (record.type !== undefined && typeof record.type !== "string") {
+    return fail("INVALID_MEMORY_TYPE", "Memory search type must be a string");
+  }
+  if (
+    record.limit !== undefined &&
+    (typeof record.limit !== "number" || !Number.isInteger(record.limit) || record.limit <= 0)
+  ) {
+    return fail("INVALID_MEMORY_LIMIT", "Memory search limit must be a positive integer");
+  }
+  const result: MemorySearchRequest = { query: record.query.trim() };
+  if (record.type !== undefined) {
+    result.type = record.type;
+  }
+  if (record.limit !== undefined) {
+    result.limit = record.limit;
+  }
+  return ok(result);
+}
+
+export function validateMemoryUpdate(input: unknown): IpcResult<MemoryUpdateRequest> {
+  if (typeof input !== "object" || input === null) {
+    return fail("INVALID_PAYLOAD", "Memory update request must be an object");
+  }
+  const record = input as { id?: unknown; content?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0) {
+    return fail("INVALID_MEMORY_ID", "Memory update requires a non-empty id");
+  }
+  if (typeof record.content !== "string" || record.content.trim().length === 0) {
+    return fail("INVALID_MEMORY_CONTENT", "Memory update requires non-empty content");
+  }
+  return ok({ id: record.id, content: record.content.trim() });
+}
+
+export function validateMemoryDelete(input: unknown): IpcResult<MemoryDeleteRequest> {
+  if (typeof input !== "object" || input === null) {
+    return fail("INVALID_PAYLOAD", "Memory delete request must be an object");
+  }
+  const record = input as { id?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0) {
+    return fail("INVALID_MEMORY_ID", "Memory delete requires a non-empty id");
+  }
+  return ok({ id: record.id });
+}
+
 export type Subscribe<T> = (callback: (payload: T) => void) => () => void;
 
 export interface JarvisBridge {
@@ -190,5 +287,12 @@ export interface JarvisBridge {
     list: () => Promise<IpcResult<AgentDashboardState>>;
     setEnabled: (patch: AgentEnabledPatch) => Promise<IpcResult<AgentEnabledPatch>>;
     onUpdated: Subscribe<AgentDashboardState>;
+  };
+  memory: {
+    list: (request?: MemoryListRequest) => Promise<IpcResult<MemoryViewerState>>;
+    search: (request: MemorySearchRequest) => Promise<IpcResult<MemoryViewerState>>;
+    update: (request: MemoryUpdateRequest) => Promise<IpcResult<MemoryUpdateRequest>>;
+    delete: (request: MemoryDeleteRequest) => Promise<IpcResult<MemoryDeleteRequest>>;
+    onUpdated: Subscribe<MemoryViewerState>;
   };
 }

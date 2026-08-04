@@ -11,6 +11,7 @@ test("menu template lists the quick actions in order", () => {
     "open:Open Application",
     "settings:Settings",
     "agents:Agents",
+    "memory:Memory",
     "voice:Start Voice Mode",
     "---",
     "quit:Exit",
@@ -32,7 +33,7 @@ test("voice item toggles its label with the voice mode state", () => {
 });
 
 test("every normal item carries one of the dispatcher's known ids", () => {
-  const ids = new Set(["open", "settings", "agents", "voice", "quit"]);
+  const ids = new Set(["open", "settings", "agents", "memory", "voice", "quit"]);
   for (const item of buildTrayMenuTemplate(false)) {
     if (item.type === "separator") {
       continue;

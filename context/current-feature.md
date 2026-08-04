@@ -1,32 +1,36 @@
-﻿# Current Feature: Agent Management Dashboard
+﻿# Current Feature: Memory Viewer UI
 
 ## Working In
 
-apps/desktop (Electron) — a renderer dashboard over the agent data the Go
-runtime already exposes (services/core/agent_registry.go SPEC-0020,
-agent_lifecycle.go SPEC-0021, agent_manifest.go SPEC-0019,
-agent_permission.go SPEC-0024), following the SPEC-0064/0065/0067/0069
-pure-TS-shared-module + main-process-store + sandboxed-window pattern.
+apps/desktop (Electron) — a renderer viewer over the memory data the Go
+runtime already exposes (services/core/memory_interface.go SPEC-0034,
+memory_storage.go SPEC-0035, conversation_memory.go SPEC-0036,
+user_profile_memory.go SPEC-0037, knowledge_ingestion.go SPEC-0040),
+following the SPEC-0064/0065/0067/0069/0070 pure-TS-shared-module +
+main-process-store + sandboxed-window pattern.
 
 ## Status
 
-Not Started
+Completed
 
 ## Goals
 
-- Display available agents
-- Display agent status
-- Display capabilities
-- Display permissions
-- Support enabling/disabling agents
-- Support viewing configuration
+- Display user memories
+- Display conversations
+- Display knowledge entries
+- Display memory metadata
+- Support search
+- Support filtering
+- Support deletion
+- Support editing where allowed
 
 ## Dependencies
 
-- SPEC-0019 Agent Manifest System (status: Completed)
-- SPEC-0020 Agent Registry (status: Completed)
-- SPEC-0021 Agent Lifecycle Manager (status: Completed)
-- SPEC-0024 Agent Permission Model (status: Completed)
+- SPEC-0034 Memory Interface (status: Completed)
+- SPEC-0035 Memory Storage Abstraction (status: Completed)
+- SPEC-0036 Conversation Memory (status: Completed)
+- SPEC-0037 User Profile Memory (status: Completed)
+- SPEC-0040 Knowledge Ingestion (status: Completed)
 - SPEC-0063 Electron Application Bootstrap (status: Completed)
 - SPEC-0064 Desktop Ipc Architecture (status: Completed)
 - SPEC-0065 Core Runtime Communication Bridge (status: Completed)
@@ -35,26 +39,59 @@ Not Started
 
 Specification:
 
-context/features/SPEC-0070-agent-management-dashboard.md
+context/features/SPEC-0071-memory-viewer-ui.md
 
 Index status at load time: Planned
 
 Dependency resolution source: Implementation Order (Phase 5 Applications) +
-Dependency Graph (Applications -> Agents, Desktop) + Requirements inference
+Dependency Graph (Applications -> Memory, Desktop) + Requirements inference
+
+Implemented design (confirmed at load): Go bridge-backed, runtime-authoritative.
+The desktop never caches or persists memory; the runtime is the source of truth
+and every change flows through the bridge.
+
+- Go seam: services/core/memory_viewer.go — MemoryViewer interface
+  (List/Search/Update/Delete) + CoreMemoryViewer, wired via WithViewerConversations
+  / WithViewerProfile / WithViewerLister. List supplies the "show all" the
+  SPEC-0034 Memory interface lacks (no list-all; MemoryQuery.Validate requires a
+  non-empty Query); Search/Update/Delete delegate to the backing Memory.
+  Update re-fetches the stored record and replaces only Content (Type/Metadata/
+  timestamps preserved).
+- Go bridge: services/core/ws_bridge.go — memory.list / memory.search /
+  memory.update / memory.delete client frames, one memory.result ack frame,
+  MemoryEntry wire view, WithBridgeMemory option, per-frame handlers. No viewer
+  wired => memory.list answers an empty list, the rest answer MEMORY_DISABLED.
+  Typed package-errors codes propagate onto the wire.
+- Desktop: shared/runtime.ts memory frame types/builders/decoders; new
+  shared/memory.ts MemoryUiStore + reducers; shared/ipc.ts jarvis:memory:*
+  channels + validators + JarvisBridge surface; main/runtimeClient.ts
+  listMemories/searchMemories/updateMemory/deleteMemory; main/ipc.ts + main.ts
+  orchestration (memory window, refreshMemories, applyMemoryUpdate/Delete with
+  jarvis:memory:updated broadcasts); tray "Memory" item; sandboxed renderer
+  memory.html + memoryRenderer.ts (search box, type filter, edit/delete).
+- devbridge leftover (services/core/cmd/devbridge/main.go) was deleted at load
+  with user approval; it was a temporary SPEC-0070 dev harness outside any spec.
 
 ## History
 
-- 2026-08-05 complete SPEC-0070 committed b6ff9f5 feat(desktop): implement SPEC-0070 Agent Management Dashboard; feature/agent-management-dashboard fast-forward merged to master and pushed (2008310..b6ff9f5); local feature branch deleted (no remote branch existed); SPEC-0070 Completed in docs/agents/JARVIS_BUILD_TRACKER.md and FEATURE_INDEX.md. Final checks before commit: scripts/go_all.ps1 all clean (5 modules, 8 new Go agent-bridge tests run individually), npm test 108/108, npm run build clean. Next per docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0061 (Voice Streaming Pipeline).
-- 2026-08-05 review SPEC-0070 verdict: Ready to complete — goals all implemented (display available agents/status/capabilities/permissions; enable-disable agents; view configuration). Architecture compliant: additive SPEC-0065 bridge frames (agents.list/agent.start/agent.stop + agents.result/agent.result acks), existing option/settle conventions on Go (WithBridgeLifecycleManager, typed codes via packages/errors), and the SPEC-0064/0067/0069 pure-TS-shared-module + main-process-store + sandboxed-window pattern on the desktop; shared/agents.ts reducer keeps the runtime authoritative while preserving local enabled flags; no new dependencies. Scope controlled (no unrelated changes; Go touched only for the agent frames). Security sound (sandboxed agents window with contextIsolation/no nodeIntegration + CSP; payloads validated main-side via validateAgentEnabledPatch; no secrets). Error handling covered on both sides (typed AGENT_LIFECYCLE_*/INVALID_AGENT_ID codes on Go; validateAgentEnabledPatch rejections, AGENT_STORE_WRITE_FAILED persist failures, NOT_CONNECTED/INVALID_AGENT_RESULT on the client; best-effort runtime control never surfaces as a toggle failure). Tests re-verified green this pass — scripts/go_all.ps1 all clean (5 modules, 8 new Go agent-bridge tests run individually), npm test 108/108, npm run build clean. Non-blocking notes: no LifecycleManager is wired in the current Container, so agent.start/agent.stop return AGENT_LIFECYCLE_DISABLED and the dashboard toggles reflect the local persisted intent (documented limitation); runtime agent status is snapshot-on-connect/refresh only, no live status pushes yet; the agents window was not manually exercised here (smoke launch only).
-- 2026-08-05 start implementation begun. Design decision (user-approved at start): Go bridge-backed dashboard. Go side (services/core/ws_bridge.go): new WithBridgeLifecycleManager option; client frames agents.list / agent.start / agent.stop and server frames agents.result / agent.result; agents.list replies with every registered agent's view ({id,name,description,capabilities=tools,permissions,memoryAccess,status from LifecycleManager, default "registered"}), empty list (not an error) when no registry is wired; agent.start/agent.stop drive real LifecycleManager transitions (Initialize/Start for enable, Stop for disable) with AGENT_DISABLED when no lifecycle manager is wired and AGENT_NOT_FOUND/AGENT_LIFECYCLE_* errors surfaced; tests in ws_bridge_test.go. Desktop: shared/agents.ts (AgentView + asAgentList decoder + reduceAgentList merging remote list while preserving local enabled flags + setAgentEnabled reducer + AgentUiStore); shared/runtime.ts gains the five frame types + builders + asAgentList/asAgentResult decoders; shared/ipc.ts gains jarvis:agents:list|set-enabled|updated + JarvisBridge.agents surface; main/agentStore.ts persists per-agent enabled flags to JSON under userData (forgiving load like SettingsStore); runtimeClient.listAgents()/setAgentEnabled() settle on agents.result/agent.result; main.ts gains an agents dashboard BrowserWindow (agents.html) + tray "Agents" item + agent refresh on runtime connect; registerIpcHandlers signature extended. Not yet committed.
-- 2026-08-05 load loaded SPEC-0070 (context/features/SPEC-0070-agent-management-dashboard.md). Requirements: an interface for managing installed agents — display available agents, agent status, capabilities, and permissions; support enable/disable and viewing configuration; testing criteria are "agents appear correctly", "status updates work", and "configuration changes persist". All resolved prerequisites are Completed per docs/agents/JARVIS_BUILD_TRACKER.md / FEATURE_INDEX.md: the Agent layer data sources (SPEC-0019 manifest capabilities/config, SPEC-0020 registry listing, SPEC-0021 lifecycle status + start/stop, SPEC-0024 permission model) and the desktop stack (SPEC-0063 bootstrap, SPEC-0064 IPC, SPEC-0065 WebSocket bridge, plus Completed peers SPEC-0066-0069 for UI patterns). Working tree clean (HEAD 2008310). Design direction for start (to confirm with user): a desktop-local dashboard in apps/desktop mirroring the SPEC-0067/0069 pattern — pure-TS shared agent-view model (available/status/capabilities/permissions + enable-disable + config view) wired over the SPEC-0064 typed IPC surface, with live status via the SPEC-0065 bridge once the Go runtime is connected; no Go changes expected unless the bridge needs new frames.
-- 2026-08-05 complete SPEC-0069 committed 1b6a885 feat(desktop): implement SPEC-0069 Settings Management UI; feature/settings-management-ui fast-forward merged to master and pushed (9e45979..1b6a885); remote feature branch deleted; SPEC-0069 Completed in docs/agents/JARVIS_BUILD_TRACKER.md and FEATURE_INDEX.md. Final checks before commit: npm test 81/81, npm run build clean, scripts/go_all.ps1 all clean (5 modules). Next per docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0070 (Agent Management Dashboard).
-- 2026-08-05 review SPEC-0069 verdict: Ready to complete — goals (settings interface for model/voice/permissions/preferences/app, save/load-on-restart/invalid-rejection) all implemented; architecture compliant (desktop-local settings owned by main, no Go changes, dependencies clean: settings->ipc values / ipc->settings type-only, no runtime cycle; settings window is a separate sandboxed BrowserWindow reusing the SPEC-0064/0065 bridge surface); scope controlled (no unrelated changes; the Go bridge remains out of scope per the approved design); security sound (sandbox/contextIsolation/no nodeIntegration, CSP default-src 'self', IPC payloads validated main-side, no secrets stored or logged); error handling covered (INVALID_SETTINGS on invalid input incl. non-object payload, SETTINGS_WRITE_FAILED on persist failure, load() forgiving fallback); tests re-verified green this pass — npm test 81/81, npm run build clean, scripts/go_all.ps1 all clean. Non-blocking notes: settings are desktop-local (runtime sync explicitly out of SPEC-0069 scope); a corrupt settings file silently falls back to defaults (deliberate, documented); settings window not manually exercised here (smoke launch only). During this review the SPEC-0069 tracker entry initially written by PowerShell was found to have mangled the file's UTF-8 (façade→faÃ§ade mojibake on the SPEC-0036/0037 lines); the tracker file was restored from git and the entry re-inserted via the edit tool, verified as a clean single-line insert with zero mojibake remaining.
-- 2026-08-05 start implementation begun. Design decision (user-approved at load): desktop-local settings owned by the Electron main process, not a Go bridge surface — the five SPEC-0069 categories (model/voice/permissions/preferences/app) mirror packages/config's Config shape for a future bridge, but no Go changes. Implemented: shared/settings.ts (Settings model, defaultSettings() mirroring config.Defaults(), SettingsPatch partial-category merge, validateSettings() strict field validation → IpcResult); main/settingsStore.ts (SettingsStore: load() falls back to defaults on missing/corrupt/invalid file, update() merge→validate→persist JSON under userData→notify, onChange); shared/ipc.ts (jarvis:settings:get|save|changed channels + JarvisBridge.settings surface); main/ipc.ts (registerIpcHandlers gained settings param + two handlers); preload.ts (channel literals + bridge methods); main.ts (SettingsStore at app.getPath("userData")/settings.json, broadcastToAll on accepted saves, new sandboxed settings BrowserWindow); trayMenu.ts/tray.ts (Settings tray item); renderer/settings.html + settingsRenderer.ts (form keyed by data-field, get on load, save whole form, inline rejection + Saved hint; Settings-prefixed script-scope declarations to avoid colliding with renderer.ts globals in the shared tsc unit); package.json (build copies whole renderer dir, test runs new suites). Tests: npm test 81/81 (19 new: 9 settings + 10 settingsStore incl. save-then-reload persistence, invalid-rejection-without-write, corrupt-file fallback); npm run build clean; scripts/go_all.ps1 all clean (no Go changes); directed electron . smoke launch ran 12s without crashing. SPEC-0069 marked Completed in docs/agents/JARVIS_BUILD_TRACKER.md; FEATURE_INDEX.md regenerated. Not yet committed.
-- 2026-08-05 load loaded SPEC-0069 (context/features/SPEC-0069-settings-management-ui.md). Requirements: a settings interface managing model settings, voice settings, permissions, user preferences, and application behavior; testing criteria are "settings save correctly", "settings load on restart", and "invalid values are rejected". Prerequisites verified: SPEC-0063 (Electron bootstrap), SPEC-0064 (IPC architecture), SPEC-0065 (bridge), SPEC-0067/0068 (voice UI/tray) all Completed; working tree clean after SPEC-0068 (0552b49). Settings data model already exists on the Go side (packages/config: App/Model/Tools/Voice/Features, load.go validation, defaults) but the desktop has no settings surface yet. Design direction for start (to confirm with user): desktop-local settings store in the Electron main process (JSON under app.getPath('userData'), validated, loaded on startup) exposed to the sandboxed renderer over new typed settings IPC channels, mirroring the SPEC-0064/0067 pure-TS shared-module + main-process-store pattern; categories map onto the Go config shape for later bridge sync but no Go changes until a bridge surface (settings.get/apply) is explicitly required.
-- 2026-08-04 complete SPEC-0068 committed 0552b49 feat(desktop): implement SPEC-0068 System Tray Application; feature/system-tray-application fast-forward merged to master and pushed (2562912..0552b49); SPEC-0068 Completed in docs/agents/JARVIS_BUILD_TRACKER.md and FEATURE_INDEX.md. Next per docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0069 (Settings Management Ui).
-- 2026-08-04 load loaded SPEC-0068
-- 2026-08-04 start implementation begun. Design decision (user-approved): "Start voice mode" extends the SPEC-0065 WebSocket bridge with `voice.start`/`voice.stop` client frames and a synchronous `voice.result` server ack rather than only opening the window. Go: `services/core/ws_bridge.go` gained the frames, a `voice` slot wired via `WithBridgeVoiceSessionManager` (renamed to avoid colliding with container.go's existing same-named Container option), and `handleVoiceControl` (ok:true / VOICE_CONTROL_FAILED on Start/Stop error / VOICE_DISABLED when no session manager is configured); 3 new tests in `ws_bridge_test.go` (fake `VoiceSessionManager`). TS: `src/shared/runtime.ts` gained frame builders + `VoiceResult`/`asVoiceResult`; `runtimeClient.ts` gained `startVoice()`/`stopVoice()` settling on `voice.result`; new `trayMenu.ts` (pure, electron-free: `TRAY_ICON_DATA_URL` 32x32 PNG + `buildTrayMenuTemplate(voiceActive)` → Open Application | Start|Stop Voice Mode | separator | Exit), `tray.ts` (electron glue `createJarvisTray`), and `main.ts` wiring (`showMainWindow`, `rebuildTray`, `toggleVoiceMode`, tray in `whenReady` try/catch, destroy in `will-quit`). Tests: +4 trayMenu, +4 runtimeClient, +2 runtime.ts. Verified: `scripts/go_all.ps1 all` clean (5 modules), `npm run build` clean, `npm test` 62/62. SPEC-0068 marked Completed in docs/agents/JARVIS_BUILD_TRACKER.md; FEATURE_INDEX.md regenerated. Not yet committed.
-- 2026-08-04 review SPEC-0068 verdict: Ready to complete — goals (tray icon, quick actions, open app, start voice, exit) all implemented; architecture compliant (additive SPEC-0065 bridge frames, existing option/settle conventions, electron-free menu model testable via node:test, no new dependencies); scope controlled (no unrelated changes); security sound (embedded icon data URL, no renderer/IPC surface added, handlers injected only); error handling covered (VOICE_DISABLED / VOICE_CONTROL_FAILED + pkgerrors propagation on Go, NOT_CONNECTED / INVALID_VOICE_RESULT + try/catch on TS); tests re-verified green this pass — scripts/go_all.ps1 all clean (5 modules), npm test 62/62. Non-blocking notes: voiceModeActive tray label tracks only tray toggles (not VOICE_SESSION_* events) — documented known limitation; slicesEqual mirrors stdlib slices.Equal.
-- 2026-08-04 review SPEC-0067 verdict: Ready to complete — all goals/architecture/scope/security/error-handling/tests checks pass.
-- 2026-08-04 complete SPEC-0067 committed 9552283 feat(desktop): implement SPEC-0067 Voice Interface UI; fast-forward merged to master and pushed (a26a2fa..9552283); SPEC-0067 Completed in docs/agents/JARVIS_BUILD_TRACKER.md and FEATURE_INDEX.md. Next per docs/execution/JARVIS_IMPLEMENTATION_ORDER.md: SPEC-0068 (System Tray).
+- 2026-08-05 start Started implementation. Go side complete and fully tested:
+  new services/core/memory_viewer.go (MemoryViewer seam + CoreMemoryViewer +
+  WithViewer* options, listTypes display order, messageViewerMetadata) and
+  services/core/ws_bridge.go additions (frame constants, MemoryEntry,
+  WithBridgeMemory, handleMemoryList/Search/Update/Delete + sendMemory* helpers).
+  New tests: memory_viewer_test.go (List grouping/filter/error, Search delegation,
+  Update preserves type/metadata, Delete, validation) and ws_bridge_test.go
+  memory frame tests (empty list without viewer, filtered list, invalid type,
+  search match/scope/empty-query, MEMORY_DISABLED for all three control frames,
+  update/delete ok + typed-error propagation). Full Go workspace clean
+  (scripts/go_all.ps1 all). Desktop shared + main + renderer layers implemented:
+  runtime.ts memory frames/decoders, new memory.ts store, ipc.ts channels+
+  validators+JarvisBridge, runtimeClient.ts methods + memoryResult settle,
+  main/ipc.ts handlers, main.ts memory window + refreshMemories +
+  applyMemoryUpdate/applyMemoryDelete + tray, preload.ts, trayMenu/tray Memory
+  item, memory.html + memoryRenderer.ts, package.json test list. Tests added for
+  validators, frame builders/decoders, MemoryUiStore, runtimeClient memory
+  methods, tray menu. npm test 136/136 passing (baseline was 108), npm run build
+  clean. Remaining: review + completion (FEATURE_INDEX/build-tracker status
+  flip, current-feature handoff).
+- 2026-08-05 load loaded SPEC-0071 (context/features/SPEC-0071-memory-viewer-ui.md). Requirements: an interface for inspecting JARVIS memory — display user memories, conversations, knowledge entries, and memory metadata; support search, filtering, deletion, and editing where allowed; testing criteria are "memories load correctly", "search works", and "changes persist". All resolved prerequisites are Completed per docs/agents/JARVIS_BUILD_TRACKER.md / FEATURE_INDEX.md: the Memory layer data sources (SPEC-0034 Memory interface, SPEC-0035 StorageMemory/LocalStore/VectorStore, SPEC-0036 ConversationMemory, SPEC-0037 UserProfileMemory, SPEC-0040 KnowledgeIngestionPipeline) and the desktop stack (SPEC-0063 bootstrap, SPEC-0064 IPC, SPEC-0065 WebSocket bridge, plus Completed peers SPEC-0066-0070 for UI patterns). Working tree clean (HEAD fa8c55b) except one untracked leftover: services/core/cmd/devbridge/main.go — a temporary SPEC-0070 dev harness whose own header says "deleted after testing"; it was left behind, so start should either extend it to seed memory for end-to-end exercise or delete it (not part of any spec). Two facts shape the design direction: (1) the Container wires Memory only via WithMemory, with no default instance, and no runtime currently exposes memory over the bridge; (2) SPEC-0034's Memory interface has no "list all" — MemoryQuery.Validate() requires a non-empty Query, and only the façades offer bounded enumeration (SPEC-0036 RecentConversations, SPEC-0037 Facts). Design direction for start (to confirm with user): mirror SPEC-0070's Go bridge-backed pattern — additive SPEC-0065 frames (memory.list / memory.search / memory.update / memory.delete + ack frames), a new WithBridgeMemory option wiring a memory-viewer seam that supplies the list-all the Memory interface lacks, a pure-TS shared memory-view model + main-process store + sandboxed BrowserWindow, with deletion/editing persisted via the same bridge surface.

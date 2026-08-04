@@ -18,6 +18,8 @@ import {
   asVoiceResult,
   asAgentList,
   asAgentControlResult,
+  asMemoryList,
+  asMemoryControlResult,
   frameApprovalResponse,
   frameCancelCommand,
   frameGetStatus,
@@ -28,6 +30,10 @@ import {
   frameAgentsList,
   frameAgentStart,
   frameAgentStop,
+  frameMemoryList,
+  frameMemorySearch,
+  frameMemoryUpdate,
+  frameMemoryDelete,
   parseFrame,
   type CommandResult,
   type RuntimeError,
@@ -39,6 +45,8 @@ import {
   type VoiceResult,
   type AgentListResult,
   type AgentControlResult,
+  type MemoryListResult,
+  type MemoryControlResult,
 } from "../shared/runtime";
 
 export type RuntimeConnectionState = "idle" | "connecting" | "connected" | "disconnected";
@@ -220,6 +228,72 @@ export class RuntimeClient {
     });
   }
 
+  // listMemories requests the runtime's memory records (memory.list ->
+  // memory.result, SPEC-0071's viewer data source), optionally scoped to one
+  // MemoryType.
+  listMemories(type?: string): Promise<MemoryListResult> {
+    const id = randomUUID();
+    return this.request(id, frameMemoryList(id, type)).then((payload) => {
+      const result = asMemoryList(payload);
+      if (!result) {
+        throw {
+          code: "INVALID_MEMORY_RESULT",
+          message: "malformed memory.result frame from runtime",
+        } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
+  // searchMemories requests the runtime's memory search (memory.search ->
+  // memory.result, SPEC-0071's search support), scoped to one MemoryType when
+  // given and capped at limit results when given.
+  searchMemories(query: string, type?: string, limit?: number): Promise<MemoryListResult> {
+    const id = randomUUID();
+    return this.request(id, frameMemorySearch(id, query, type, limit)).then((payload) => {
+      const result = asMemoryList(payload);
+      if (!result) {
+        throw {
+          code: "INVALID_MEMORY_RESULT",
+          message: "malformed memory.result frame from runtime",
+        } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
+  // updateMemory sends a memory.update frame (SPEC-0071's "editing where
+  // allowed") and resolves with the runtime's memory.result acknowledgement.
+  updateMemory(id: string, content: string): Promise<MemoryControlResult> {
+    const requestId = randomUUID();
+    return this.request(requestId, frameMemoryUpdate(requestId, id, content)).then((payload) => {
+      const result = asMemoryControlResult(payload);
+      if (!result) {
+        throw {
+          code: "INVALID_MEMORY_RESULT",
+          message: "malformed memory.result frame from runtime",
+        } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
+  // deleteMemory sends a memory.delete frame (SPEC-0071's deletion support)
+  // and resolves with the runtime's memory.result acknowledgement.
+  deleteMemory(id: string): Promise<MemoryControlResult> {
+    const requestId = randomUUID();
+    return this.request(requestId, frameMemoryDelete(requestId, id)).then((payload) => {
+      const result = asMemoryControlResult(payload);
+      if (!result) {
+        throw {
+          code: "INVALID_MEMORY_RESULT",
+          message: "malformed memory.result frame from runtime",
+        } satisfies RuntimeError;
+      }
+      return result;
+    });
+  }
+
   private voiceRequest(buildFrame: (id: string) => RuntimeFrame): Promise<VoiceResult> {
     const id = randomUUID();
     return this.request(id, buildFrame(id)).then((payload) => {
@@ -303,6 +377,7 @@ export class RuntimeClient {
       case RuntimeFrameType.voiceResult:
       case RuntimeFrameType.agentsResult:
       case RuntimeFrameType.agentResult:
+      case RuntimeFrameType.memoryResult:
         this.settleRequest(frame);
         return;
       case RuntimeFrameType.statusChanged: {
