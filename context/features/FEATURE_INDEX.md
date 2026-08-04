@@ -1055,7 +1055,7 @@ SPEC-0062-voice-interruptions-barge-in.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

@@ -8,6 +8,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -51,6 +52,10 @@ func (r *recordingVoiceEngine) PlaybackStream(ctx context.Context, audioCh <-cha
 	r.mu.Unlock()
 	if err != nil {
 		return err
+	}
+
+	if r.fakeVoiceEngine.playbackStreamOverride != nil {
+		return r.fakeVoiceEngine.playbackStreamOverride(ctx, audioCh, sampleRate)
 	}
 
 	var buf []byte
@@ -635,6 +640,379 @@ func TestFlushCompleteSentences(t *testing.T) {
 	}
 	if remaining := buf.String(); remaining != "" {
 		t.Fatalf("buf after flush = %q, want empty", remaining)
+	}
+}
+
+// --- SPEC-0062 Barge-In Tests ---
+
+// blockingHandler returns a RequestHandler that blocks until ctx is
+// cancelled, recording that it was called and what transcript it received.
+// The returned channel receives the ctx.Err() once the handler unblocks.
+func blockingHandler() (RequestHandler, *sync.Mutex, *[]string, <-chan error) {
+	var mu sync.Mutex
+	var calls []string
+	errCh := make(chan error, 1)
+	handler := func(ctx context.Context, transcript string) (string, error) {
+		mu.Lock()
+		calls = append(calls, transcript)
+		mu.Unlock()
+		<-ctx.Done()
+		errCh <- ctx.Err()
+		return "", ctx.Err()
+	}
+	return handler, &mu, &calls, errCh
+}
+
+// slowHandler returns a RequestHandler that blocks for the given duration
+// (or until ctx cancels) then returns a response.
+func slowHandler(d time.Duration, response string) RequestHandler {
+	return func(ctx context.Context, transcript string) (string, error) {
+		select {
+		case <-time.After(d):
+			return response, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+}
+
+func TestSessionManager_BargeIn_InterruptsDuringBatchHandler(t *testing.T) {
+	handler, _, _, handlerCancelled := blockingHandler()
+	tts := &fakeTTSProvider{audio: []byte("audio")}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+	started1 := subscribeOnce(bus, EventSessionStarted)
+	interrupted := subscribeOnce(bus, EventSessionInterrupted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started1, "first EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "turn on the lights", "final": true},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	started2 := subscribeOnce(bus, EventSessionStarted)
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+
+	select {
+	case err := <-handlerCancelled:
+		if err != context.Canceled {
+			t.Errorf("handler cancelled with %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not cancelled by barge-in")
+	}
+
+	event := waitForEvent(t, interrupted, "EventSessionInterrupted")
+	if sid, _ := event.Payload["sessionId"].(string); sid != "session-1" {
+		t.Errorf("interrupted sessionId = %q, want %q", sid, "session-1")
+	}
+	if transcript, _ := event.Payload["transcript"].(string); transcript != "turn on the lights" {
+		t.Errorf("interrupted transcript = %q, want %q", transcript, "turn on the lights")
+	}
+
+	waitForEvent(t, started2, "second EventSessionStarted")
+	second := sm.CurrentSession()
+	if second == nil || second.State != SessionStateListening {
+		t.Fatalf("after barge-in, CurrentSession() = %+v, want a new session in listening", second)
+	}
+	if second.ID == "session-1" {
+		t.Error("new session has the same ID as the interrupted one")
+	}
+}
+
+func TestSessionManager_BargeIn_InterruptsDuringBatchPlayback(t *testing.T) {
+	tts := &fakeTTSProvider{audio: []byte("long-audio-data")}
+	handler := slowHandler(0, "the response text")
+
+	sm, engine, bus := newTestSessionManager(t, handler, tts)
+
+	engine.mu.Lock()
+	engine.playbackStreamErr = nil
+	engine.mu.Unlock()
+
+	var playbackCtx context.Context
+	engine.fakeVoiceEngine.playbackStreamOverride = func(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+		playbackCtx = ctx
+		<-ctx.Done()
+		for range audioCh {
+		}
+		return ctx.Err()
+	}
+
+	started1 := subscribeOnce(bus, EventSessionStarted)
+	interrupted := subscribeOnce(bus, EventSessionInterrupted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started1, "first EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "what time is it", "final": true},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	started2 := subscribeOnce(bus, EventSessionStarted)
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+
+	event := waitForEvent(t, interrupted, "EventSessionInterrupted")
+	if pr, _ := event.Payload["partialResponse"].(string); pr != "the response text" {
+		t.Errorf("interrupted partialResponse = %q, want %q", pr, "the response text")
+	}
+
+	waitForEvent(t, started2, "second EventSessionStarted")
+
+	if playbackCtx != nil && playbackCtx.Err() == nil {
+		t.Error("playback context was not cancelled by barge-in")
+	}
+}
+
+func TestSessionManager_BargeIn_InterruptsDuringStreamingPlayback(t *testing.T) {
+	tts := &fakeTTSProvider{}
+	batchHandler := slowHandler(0, "unused")
+
+	streamHandler := func(ctx context.Context, transcript string, onChunk func(ResponseChunk) error) error {
+		if err := onChunk(ResponseChunk{Text: "First sentence. "}); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	sm, engine, bus := newTestSessionManager(t, batchHandler, tts, WithStreamingHandler(streamHandler))
+
+	engine.fakeVoiceEngine.playbackStreamOverride = func(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+		<-ctx.Done()
+		for range audioCh {
+		}
+		return ctx.Err()
+	}
+
+	started1 := subscribeOnce(bus, EventSessionStarted)
+	interrupted := subscribeOnce(bus, EventSessionInterrupted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started1, "first EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "tell me about X", "final": true},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	started2 := subscribeOnce(bus, EventSessionStarted)
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+
+	event := waitForEvent(t, interrupted, "EventSessionInterrupted")
+	if pr, _ := event.Payload["partialResponse"].(string); pr != "First sentence. " {
+		t.Errorf("interrupted partialResponse = %q, want %q", pr, "First sentence. ")
+	}
+
+	waitForEvent(t, started2, "second EventSessionStarted")
+}
+
+func TestSessionManager_BargeIn_ContextPreserved(t *testing.T) {
+	handler, _, _, _ := blockingHandler()
+	tts := &fakeTTSProvider{audio: []byte("audio")}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+	started := subscribeOnce(bus, EventSessionStarted)
+	interrupted := subscribeOnce(bus, EventSessionInterrupted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "what is the weather", "final": true},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, interrupted, "EventSessionInterrupted")
+
+	turn := sm.LastInterruptedTurn()
+	if turn == nil {
+		t.Fatal("LastInterruptedTurn() = nil, want the interrupted turn's context")
+	}
+	if turn.Transcript != "what is the weather" {
+		t.Errorf("InterruptedTurn.Transcript = %q, want %q", turn.Transcript, "what is the weather")
+	}
+}
+
+func TestSessionManager_BargeIn_ContextClearedAfterNormalCompletion(t *testing.T) {
+	callCount := 0
+	handler := func(ctx context.Context, transcript string) (string, error) {
+		callCount++
+		if callCount == 1 {
+			<-ctx.Done()
+			return "", ctx.Err()
+		}
+		return "response", nil
+	}
+	tts := &fakeTTSProvider{audio: []byte("audio")}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	started1 := subscribeOnce(bus, EventSessionStarted)
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started1, "first EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "first", "final": true},
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	interrupted := subscribeOnce(bus, EventSessionInterrupted)
+	started2 := subscribeOnce(bus, EventSessionStarted)
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, interrupted, "EventSessionInterrupted")
+	waitForEvent(t, started2, "second EventSessionStarted")
+
+	if sm.LastInterruptedTurn() == nil {
+		t.Fatal("LastInterruptedTurn() should be set after interruption")
+	}
+
+	completed := subscribeOnce(bus, EventSessionCompleted)
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "second", "final": true},
+	})
+	waitForEvent(t, completed, "EventSessionCompleted")
+
+	if sm.LastInterruptedTurn() != nil {
+		t.Error("LastInterruptedTurn() should be nil after a normal completion")
+	}
+}
+
+func TestSessionManager_BargeIn_IgnoresWakeWordDuringListening(t *testing.T) {
+	handler := func(ctx context.Context, transcript string) (string, error) {
+		return "ok", nil
+	}
+	sm, _, bus := newTestSessionManager(t, handler, &fakeTTSProvider{audio: []byte("a")})
+	started := subscribeOnce(bus, EventSessionStarted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	first := sm.CurrentSession()
+	if first == nil {
+		t.Fatal("CurrentSession() = nil after first wake word")
+	}
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	time.Sleep(200 * time.Millisecond)
+
+	second := sm.CurrentSession()
+	if second == nil || second.ID != first.ID {
+		t.Errorf("CurrentSession() = %+v, want the original session %+v unchanged", second, first)
+	}
+}
+
+func TestSessionManager_BargeIn_StopCancelsActiveRequest(t *testing.T) {
+	handler, _, _, handlerCancelled := blockingHandler()
+	tts := &fakeTTSProvider{audio: []byte("audio")}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+	started := subscribeOnce(bus, EventSessionStarted)
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+	waitForEvent(t, started, "EventSessionStarted")
+
+	bus.Publish(types.Event{
+		Type:    EventVoiceTranscript,
+		Source:  "test",
+		Payload: map[string]any{"text": "do something", "final": true},
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if err := sm.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	select {
+	case <-handlerCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not cancelled by Stop()")
+	}
+}
+
+func TestSessionManager_BargeIn_RapidInterruptionsDoNotDeadlock(t *testing.T) {
+	handler := func(ctx context.Context, transcript string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	tts := &fakeTTSProvider{audio: []byte("audio")}
+
+	sm, _, bus := newTestSessionManager(t, handler, tts)
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer sm.Stop()
+
+	for i := 0; i < 5; i++ {
+		started := subscribeOnce(bus, EventSessionStarted)
+		bus.Publish(types.Event{Type: EventWakeWordDetected, Source: "test"})
+		waitForEvent(t, started, "EventSessionStarted")
+
+		bus.Publish(types.Event{
+			Type:    EventVoiceTranscript,
+			Source:  "test",
+			Payload: map[string]any{"text": fmt.Sprintf("request-%d", i), "final": true},
+		})
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	final := sm.CurrentSession()
+	if final == nil {
+		t.Fatal("CurrentSession() = nil after rapid interruptions")
 	}
 }
 

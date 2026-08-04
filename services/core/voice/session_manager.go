@@ -1,15 +1,12 @@
-// session_manager.go implements SPEC-0060: the Voice Session Manager - the
-// component that sequences a complete voice interaction (Wake Word ->
-// Capture Audio -> Transcribe -> Process Request -> Generate Response ->
-// Speak) into one bounded Session, on top of the already-continuous audio
-// pipeline Microphone (SPEC-0054) drives. Microphone publishes
-// EventWakeWordDetected and EventVoiceTranscript regardless of any session
-// state; SessionManager is what turns those two events into a gated
-// request/response cycle: a session starts on wake word detection, ends
-// once the resulting transcript has been handed to the agent layer (via
-// RequestHandler) and its response has been spoken, and any transcript
-// arriving with no active session is ignored (ambient audio the wake word
-// never gated).
+// session_manager.go implements SPEC-0060 and SPEC-0062: the Voice Session
+// Manager sequences a complete voice interaction (Wake Word -> Capture Audio
+// -> Transcribe -> Process Request -> Generate Response -> Speak) into one
+// bounded Session, on top of the already-continuous audio pipeline Microphone
+// (SPEC-0054) drives. SPEC-0062 adds barge-in: if the user says the wake
+// word while JARVIS is processing or responding, the active session is
+// interrupted (TTS/handler cancelled), and a new session starts in listening
+// mode to capture the user's next utterance, with the interrupted turn's
+// context preserved for the agent layer.
 package voice
 
 import (
@@ -36,9 +33,10 @@ const defaultSessionTimeout = 15 * time.Second
 // EventBus (SPEC-0060's "sessions start correctly"/"sessions complete
 // correctly"/"resources are released" testing criteria).
 const (
-	EventSessionStarted   types.EventType = "VOICE_SESSION_STARTED"
-	EventSessionCompleted types.EventType = "VOICE_SESSION_COMPLETED"
-	EventSessionFailed    types.EventType = "VOICE_SESSION_FAILED"
+	EventSessionStarted     types.EventType = "VOICE_SESSION_STARTED"
+	EventSessionCompleted   types.EventType = "VOICE_SESSION_COMPLETED"
+	EventSessionFailed      types.EventType = "VOICE_SESSION_FAILED"
+	EventSessionInterrupted types.EventType = "VOICE_SESSION_INTERRUPTED"
 )
 
 // SessionState is where a Session currently sits in the SPEC-0060 flow.
@@ -63,6 +61,14 @@ type Session struct {
 	State      SessionState
 	StartedAt  time.Time
 	Transcript string
+}
+
+// InterruptedTurn records the context of a session that was interrupted by
+// barge-in (SPEC-0062), so the next session's RequestHandler can incorporate
+// what was said and partially responded before the user interrupted.
+type InterruptedTurn struct {
+	Transcript      string
+	PartialResponse string
 }
 
 // RequestHandler processes a session's transcribed utterance and returns
@@ -126,11 +132,16 @@ type SessionManager struct {
 
 	sessionTimeout time.Duration
 
-	mu         sync.Mutex
-	running    bool
-	session    *Session
-	activeDone chan struct{}
-	nextID     int
+	mu            sync.Mutex
+	running       bool
+	session       *Session
+	activeDone    chan struct{}
+	nextID        int
+	cancelRequest   context.CancelFunc
+	requestDone     chan struct{}
+	requestGeneration uint64
+
+	interruptedTurn *InterruptedTurn
 
 	unsubWake       func()
 	unsubTranscript func()
@@ -264,6 +275,18 @@ func (sm *SessionManager) Stop() error {
 		unsubTranscript()
 	}
 
+	sm.mu.Lock()
+	cancelFn := sm.cancelRequest
+	doneCh := sm.requestDone
+	sm.mu.Unlock()
+
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if doneCh != nil {
+		<-doneCh
+	}
+
 	if session := sm.clearSessionIfID(""); session != nil {
 		sm.publish(EventSessionFailed, map[string]any{"sessionId": session.ID, "reason": "voice session manager stopped"})
 	}
@@ -284,14 +307,64 @@ func (sm *SessionManager) CurrentSession() *Session {
 	return &snapshot
 }
 
-// handleWakeWord starts a new Session on EventWakeWordDetected (SPEC-0060's
-// "session creation" requirement), unless one is already active - only one
-// Session runs at a time, so a wake word detected mid-session is ignored.
+// LastInterruptedTurn returns the context of the most recently interrupted
+// session (SPEC-0062), or nil if the last session completed or failed
+// normally. The agent layer can use this to incorporate partial context
+// from the interrupted exchange into the next response.
+func (sm *SessionManager) LastInterruptedTurn() *InterruptedTurn {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.interruptedTurn == nil {
+		return nil
+	}
+	snapshot := *sm.interruptedTurn
+	return &snapshot
+}
+
+// handleWakeWord starts a new Session on EventWakeWordDetected. If a session
+// is already active in SessionStateListening (waiting for speech), the wake
+// word is ignored. If a session is in SessionStateProcessing or
+// SessionStateResponding (SPEC-0062 barge-in), the active pipeline is
+// cancelled, the interrupted session's context is preserved, and a new
+// session starts in listening mode.
 func (sm *SessionManager) handleWakeWord(event types.Event) {
 	sm.mu.Lock()
 	if sm.session != nil {
+		active := sm.session
+		if active.State == SessionStateListening {
+			sm.mu.Unlock()
+			sm.log.Debug("voice: wake word detected while listening, ignoring", nil)
+			return
+		}
+
+		cancelFn := sm.cancelRequest
+		doneCh := sm.requestDone
 		sm.mu.Unlock()
-		sm.log.Debug("voice: wake word detected while a session is already active, ignoring", nil)
+
+		sm.log.Info("voice: barge-in detected, interrupting active session", map[string]any{"sessionId": active.ID})
+
+		if cancelFn != nil {
+			cancelFn()
+		}
+		if doneCh != nil {
+			<-doneCh
+		}
+
+		sm.startNewSession()
+		return
+	}
+	sm.mu.Unlock()
+
+	sm.startNewSession()
+}
+
+// startNewSession allocates a new Session, publishes EventSessionStarted,
+// and starts the timeout watchdog. Factored out of handleWakeWord so both
+// the normal and barge-in paths share the same creation logic.
+func (sm *SessionManager) startNewSession() {
+	sm.mu.Lock()
+	if !sm.running {
+		sm.mu.Unlock()
 		return
 	}
 	sm.nextID++
@@ -354,14 +427,15 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 		close(sm.activeDone)
 		sm.activeDone = nil
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan struct{})
+	sm.requestGeneration++
+	gen := sm.requestGeneration
+	sm.cancelRequest = cancel
+	sm.requestDone = doneCh
 	sm.mu.Unlock()
 
-	if strings.TrimSpace(text) == "" {
-		sm.finishSession(session, EventSessionFailed, "empty transcript")
-		return
-	}
-
-	sm.processRequest(session, text)
+	sm.processRequest(session, text, ctx, cancel, doneCh, gen)
 }
 
 // processRequest carries out SPEC-0060's "Process Request", "Generate
@@ -372,16 +446,36 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 // communication), tts.Synthesize converts it to audio, and engine.Playback
 // speaks it. Either way, any failure ends the session as failed rather than
 // continuing to the next stage.
-func (sm *SessionManager) processRequest(session *Session, text string) {
-	if sm.streamingHandler != nil {
-		sm.processRequestStreaming(session, text)
+func (sm *SessionManager) processRequest(session *Session, text string, ctx context.Context, cancel context.CancelFunc, doneCh chan struct{}, gen uint64) {
+	defer func() {
+		cancel()
+		sm.mu.Lock()
+		if sm.requestGeneration == gen {
+			sm.cancelRequest = nil
+			sm.requestDone = nil
+		}
+		sm.mu.Unlock()
+		close(doneCh)
+	}()
+
+	if strings.TrimSpace(text) == "" {
+		sm.finishSession(session, EventSessionFailed, "empty transcript")
 		return
 	}
 
-	ctx := context.Background()
+	if sm.streamingHandler != nil {
+		sm.processRequestStreaming(ctx, session, text)
+		return
+	}
 
 	response, err := sm.handler(ctx, text)
 	if err != nil {
+		if ctx.Err() != nil {
+			if !sm.isStopping() {
+				sm.interruptSession(session, text, "")
+			}
+			return
+		}
 		sm.log.Error("voice: request handler failed", map[string]any{"sessionId": session.ID, "error": err.Error()})
 		sm.finishSession(session, EventSessionFailed, err.Error())
 		return
@@ -395,18 +489,40 @@ func (sm *SessionManager) processRequest(session *Session, text string) {
 
 	audio, err := sm.tts.Synthesize(ctx, response, core.VoiceOptions{})
 	if err != nil {
+		if ctx.Err() != nil {
+			if !sm.isStopping() {
+				sm.interruptSession(session, text, response)
+			}
+			return
+		}
 		sm.log.Error("voice: tts synthesis failed", map[string]any{"sessionId": session.ID, "error": err.Error()})
 		sm.finishSession(session, EventSessionFailed, err.Error())
 		return
 	}
 
-	if err := sm.engine.Playback(audio, sm.cfg.TTSSampleRate); err != nil {
+	if err := sm.engine.PlaybackStream(ctx, sliceToChannel(audio), sm.cfg.TTSSampleRate); err != nil {
+		if ctx.Err() != nil {
+			if !sm.isStopping() {
+				sm.interruptSession(session, text, response)
+			}
+			return
+		}
 		sm.log.Error("voice: playback failed", map[string]any{"sessionId": session.ID, "error": err.Error()})
 		sm.finishSession(session, EventSessionFailed, err.Error())
 		return
 	}
 
 	sm.finishSession(session, EventSessionCompleted, "")
+}
+
+// sliceToChannel wraps a single audio buffer in a closed channel, adapting
+// the batch Playback path to use PlaybackStream (which supports ctx
+// cancellation for barge-in).
+func sliceToChannel(audio []byte) <-chan []byte {
+	ch := make(chan []byte, 1)
+	ch <- audio
+	close(ch)
+	return ch
 }
 
 // processRequestStreaming is processRequest's SPEC-0061 streaming path: it
@@ -422,8 +538,8 @@ func (sm *SessionManager) processRequest(session *Session, text string) {
 // streamingHandler - and any pending, blocked send to sentenceCh in
 // onChunk - stops promptly instead of continuing to produce text nothing
 // will speak.
-func (sm *SessionManager) processRequestStreaming(session *Session, text string) {
-	ctx, cancel := context.WithCancel(context.Background())
+func (sm *SessionManager) processRequestStreaming(parentCtx context.Context, session *Session, text string) {
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	sentenceCh := make(chan string, sentenceBufferSize)
@@ -436,8 +552,10 @@ func (sm *SessionManager) processRequestStreaming(session *Session, text string)
 		speakDone <- err
 	}()
 
+	var responseBuf strings.Builder
 	var buf strings.Builder
 	handlerErr := sm.streamingHandler(ctx, text, func(chunk ResponseChunk) error {
+		responseBuf.WriteString(chunk.Text)
 		buf.WriteString(chunk.Text)
 		for _, sentence := range flushCompleteSentences(&buf) {
 			if err := sendSentence(ctx, sentenceCh, sentence); err != nil {
@@ -457,10 +575,13 @@ func (sm *SessionManager) processRequestStreaming(session *Session, text string)
 
 	speakErr := <-speakDone
 
-	// speakErr, not handlerErr, is reported when both are non-nil: a
-	// speakSentences failure is what triggered cancel() above, so any
-	// resulting handlerErr is just that cancellation surfacing through
-	// streamingHandler, not the failure's root cause.
+	if parentCtx.Err() != nil {
+		if !sm.isStopping() {
+			sm.interruptSession(session, text, responseBuf.String())
+		}
+		return
+	}
+
 	switch {
 	case speakErr != nil:
 		sm.log.Error("voice: streaming speech failed", map[string]any{"sessionId": session.ID, "error": speakErr.Error()})
@@ -589,12 +710,41 @@ func flushCompleteSentences(buf *strings.Builder) []string {
 	return sentences
 }
 
+// interruptSession ends session as interrupted (SPEC-0062): it records
+// the interrupted turn's context for the next session, clears sm.session,
+// and publishes EventSessionInterrupted. Called from processRequest /
+// processRequestStreaming when the cancellation was triggered by barge-in
+// (parentCtx.Err() != nil).
+func (sm *SessionManager) interruptSession(session *Session, transcript, partialResponse string) {
+	sm.clearSessionIfID(session.ID)
+
+	sm.mu.Lock()
+	sm.interruptedTurn = &InterruptedTurn{
+		Transcript:      transcript,
+		PartialResponse: partialResponse,
+	}
+	sm.mu.Unlock()
+
+	sm.publish(EventSessionInterrupted, map[string]any{
+		"sessionId":       session.ID,
+		"transcript":      transcript,
+		"partialResponse": partialResponse,
+	})
+	sm.log.Info("voice: session interrupted by barge-in", map[string]any{"sessionId": session.ID})
+}
+
 // finishSession ends session (SPEC-0060's "session cleanup" requirement):
 // it clears sm.session so the next wake word can start a fresh session, and
 // publishes eventType (EventSessionCompleted or EventSessionFailed, the
-// latter carrying reason).
+// latter carrying reason). Also clears interruptedTurn, since a normally
+// completed/failed session means the conversation moved past any prior
+// interruption.
 func (sm *SessionManager) finishSession(session *Session, eventType types.EventType, reason string) {
 	sm.clearSessionIfID(session.ID)
+
+	sm.mu.Lock()
+	sm.interruptedTurn = nil
+	sm.mu.Unlock()
 
 	payload := map[string]any{"sessionId": session.ID, "transcript": session.Transcript}
 	if reason != "" {
@@ -602,6 +752,12 @@ func (sm *SessionManager) finishSession(session *Session, eventType types.EventT
 	}
 	sm.publish(eventType, payload)
 	sm.log.Info("voice: session finished", map[string]any{"sessionId": session.ID, "event": string(eventType)})
+}
+
+func (sm *SessionManager) isStopping() bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return !sm.running
 }
 
 // clearSessionIfID clears sm.session and stops its timeout watchdog (if

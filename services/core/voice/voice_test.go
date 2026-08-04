@@ -56,7 +56,8 @@ var _ core.STTProvider = (*mockSTTProvider)(nil)
 // the test controls directly, so audio can be injected without a real
 // subprocess.
 type fakeVoiceEngine struct {
-	captureCh chan []byte
+	captureCh              chan []byte
+	playbackStreamOverride func(ctx context.Context, audioCh <-chan []byte, sampleRate int) error
 }
 
 func (f *fakeVoiceEngine) Initialize(cfg *config.VoiceConfig, log *logger.Logger) error {
@@ -73,6 +74,9 @@ func (f *fakeVoiceEngine) Playback(audio []byte, sampleRate int) error { return 
 // is cancelled, mirroring what a real PlaybackStream implementation does
 // without needing a subprocess.
 func (f *fakeVoiceEngine) PlaybackStream(ctx context.Context, audioCh <-chan []byte, sampleRate int) error {
+	if f.playbackStreamOverride != nil {
+		return f.playbackStreamOverride(ctx, audioCh, sampleRate)
+	}
 	for {
 		select {
 		case _, ok := <-audioCh:
