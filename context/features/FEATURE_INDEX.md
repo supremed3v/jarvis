@@ -1072,7 +1072,7 @@ SPEC-0063-electron-application-bootstrap.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

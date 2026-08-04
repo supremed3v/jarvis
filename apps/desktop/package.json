@@ -1,0 +1,16 @@
+{
+  "name": "jarvis-desktop",
+  "version": "0.1.0",
+  "description": "JARVIS desktop application shell",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').cpSync('src/renderer/index.html','dist/renderer/index.html')\"",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "typescript": "^5.8.0"
+  }
+}

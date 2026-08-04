@@ -1,127 +1,72 @@
-# Current Feature: SPEC-0062 Voice Interruptions And Barge-In
+# Current Feature: SPEC-0063 Electron Application Bootstrap
 
 ## Status: Complete
 
-## Spec
+## Specification
 
-context/features/SPEC-0062-voice-interruptions-barge-in.md
+Reference: context/features/SPEC-0063-electron-application-bootstrap.md
+SPEC-ID: SPEC-0063
+Title: Electron Application Bootstrap
 
-## Overview
+## Objective
 
-Implement natural conversation interruption handling — "barge-in" — so a user
-can speak while JARVIS is still responding, causing JARVIS to stop its current
-TTS/playback immediately, capture the new utterance, and continue the
-conversation with context intact.
+Create the initial Electron desktop application shell for JARVIS. The desktop application provides the user-facing interface while communicating with the Go core runtime.
 
-## Requirements (from spec)
+## Dependencies
 
-1. User interrupting speech output
-2. Cancelling active generation
-3. Restarting listening mode
-4. Maintaining conversation context
+Required previous specs (all Completed):
+- SPEC-0001 through SPEC-0006 (Foundation layer)
+- SPEC-0007 through SPEC-0010 (Runtime layer)
+- SPEC-0002 Development Environment (.nvmrc=20, Node.js toolchain)
+- ADR-0003: Electron chosen as desktop framework
 
-## Flow (from spec)
+## Requirements
 
-    JARVIS Speaking → User Interrupts → Stop TTS → Capture User Speech → Continue Conversation
+Implement:
+- Electron application entry point
+- Main process
+- Renderer process
+- Application lifecycle (startup, shutdown)
+- Development scripts
+- Local runtime connection support
 
-## Testing Criteria (from spec)
+## Files To Create
 
-1. User can interrupt JARVIS
-2. TTS stops correctly
-3. Context remains intact
+- `apps/desktop/package.json` — Electron app package with dependencies and scripts
+- `apps/desktop/src/main/main.ts` — Main process entry point (BrowserWindow, app lifecycle)
+- `apps/desktop/src/main/preload.ts` — Preload script for secure renderer-main bridge
+- `apps/desktop/src/renderer/index.html` — Renderer HTML entry
+- `apps/desktop/src/renderer/renderer.ts` — Renderer process script
+- `apps/desktop/tsconfig.json` — TypeScript configuration
 
-## Dependencies (all Completed)
+## Files To Modify
 
-- SPEC-0053 Audio Engine Interface (capture/playback/device discovery)
-- SPEC-0054 Microphone Management (continuous capture, wake word fan-out)
-- SPEC-0055 Wake Word Detection (detection events on EventBus)
-- SPEC-0056 STT Provider Interface (TranscriptionChunk with confidence)
-- SPEC-0057 Whisper Integration (concrete STT)
-- SPEC-0058 TTS Provider Interface (VoiceOptions, Synthesize/StreamSynthesize)
-- SPEC-0059 Piper Integration (concrete TTS)
-- SPEC-0060 Voice Session Manager (session lifecycle, batch path)
-- SPEC-0061 Voice Streaming Pipeline (streaming path, sentence-by-sentence TTS)
-
-## Key Files
-
-- `services/core/voice/session_manager.go` — SessionManager (primary change target)
-- `services/core/voice/audio_engine.go` — AudioEngine (Playback/PlaybackStream may need stop support)
-- `services/core/voice/microphone.go` — Microphone (always-on capture, wake word/STT events)
-- `services/core/container.go` — core.VoiceEngine/TTSProvider/VoiceSessionManager interfaces
-
-## Architecture Analysis
-
-### Current state
-
-- `SessionManager.processRequest` (batch) and `processRequestStreaming` (streaming)
-  both use `context.Background()` — there is no mechanism to cancel an in-flight
-  TTS/playback/handler from outside.
-- `handleWakeWord` ignores a wake word while a session is already active (logs
-  "ignoring" and returns).
-- `Microphone` runs continuously — audio capture and wake word detection never
-  stop, even while JARVIS is speaking. This means the wake word detector can
-  fire during playback if the user says the wake word.
-- `AudioEngine.Playback`/`PlaybackStream` are cancellable via ctx (PlaybackStream)
-  or blocking (Playback). Neither has an explicit "stop now" method.
-
-### What needs to change
-
-1. **Interruption detection**: `handleWakeWord` must recognize a wake word during
-   `SessionStateProcessing` or `SessionStateResponding` as an interruption signal,
-   not ignore it.
-
-2. **Cancellation plumbing**: `processRequest`/`processRequestStreaming` need a
-   cancellable context that the interruption path can cancel, stopping:
-   - The RequestHandler/StreamingRequestHandler (active generation)
-   - TTS synthesis (StreamSynthesize/Synthesize)
-   - Audio playback (PlaybackStream/Playback)
-
-3. **Session transition**: On interruption, the current session should be ended
-   (as interrupted, not failed), and a new session started in listening mode
-   to capture the user's new utterance.
-
-4. **Context preservation**: The interrupted session's transcript and partial
-   response should be available to the next session's RequestHandler so the
-   conversation flow isn't lost.
+- `apps/desktop/.gitkeep` — Remove (replaced by real files)
 
 ## Implementation Plan
 
-### 1. Add cancellation plumbing to SessionManager
+1. Initialize `apps/desktop/package.json` with Electron, TypeScript, and dev tooling dependencies
+2. Create TypeScript configuration for Electron main + renderer
+3. Implement main process (`main.ts`): app ready, create BrowserWindow, load renderer, handle lifecycle (activate, window-all-closed, before-quit)
+4. Implement preload script for contextBridge API exposure
+5. Create renderer HTML and renderer script
+6. Add npm scripts: `dev` (development with hot reload or watch), `build`, `start`
+7. Verify: app launches, main process starts, renderer loads
 
-- Store a `cancelRequest context.CancelFunc` on SessionManager (set when
-  processRequest/processRequestStreaming starts, cleared when it ends).
-- Both `processRequest` and `processRequestStreaming` derive their ctx from
-  a new cancellable context instead of `context.Background()`.
+## Testing Plan
 
-### 2. Add interruption handling to handleWakeWord
+- Desktop application launches successfully
+- Main process starts correctly (app ready event fires, BrowserWindow created)
+- Renderer loads successfully (HTML rendered, preload bridge available)
+- Application shuts down cleanly
 
-- When a wake word arrives during `SessionStateProcessing` or
-  `SessionStateResponding`, call the stored `cancelRequest()` to abort the
-  current pipeline, wait for it to finish (via a done channel), then start
-  a new session.
+## Completion Checklist
 
-### 3. Add a new session state and event
-
-- `SessionStateInterrupted` — transitional state for a session being
-  interrupted (between the cancel and the new session starting).
-- `EventSessionInterrupted` event type — distinct from failed/completed.
-
-### 4. Convert batch Playback to be cancellable
-
-- `AudioEngine.Playback` currently uses `context.Background()`. Change it to
-  accept/use a context so it can be killed mid-utterance, or convert the
-  batch path to use PlaybackStream (which already takes ctx).
-
-### 5. Maintain conversation context
-
-- Add `InterruptedTurn *ConversationTurn` to SessionManager (transcript +
-  partial response of the last interrupted session), accessible via a method
-  so the agent layer can incorporate it into the next session's context.
-
-### 6. Tests
-
-- User interrupts during batch playback → TTS stops, new session starts
-- User interrupts during streaming playback → pipeline stops, new session starts
-- User interrupts during handler (active generation) → handler cancelled
-- Context from interrupted session available to next session
-- Multiple rapid interruptions don't deadlock or panic
+- [x] Specification followed
+- [x] Electron app entry point created (`apps/desktop/package.json`, `main` -> `dist/main/main.js`)
+- [x] Main process implemented (`src/main/main.ts`: BrowserWindow, app lifecycle, IPC handler)
+- [x] Renderer process implemented (`src/renderer/index.html` + `renderer.ts`)
+- [x] Application lifecycle handled (ready, activate, window-all-closed, before-quit)
+- [x] Development scripts added (`build`, `start`, `dev`, `watch`)
+- [x] Tests/verification performed (app launches, renderer loads, TypeScript compiles clean, Go workspace unaffected)
+- [x] Documentation updated (tracker, feature index regenerated)
