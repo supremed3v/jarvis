@@ -1106,7 +1106,7 @@ SPEC-0065-core-runtime-communication-bridge.md
 
 Status:
 
-Planned
+Completed
 
 
 ---

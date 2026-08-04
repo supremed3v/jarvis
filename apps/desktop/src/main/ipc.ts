@@ -1,5 +1,4 @@
 import { app, type BrowserWindow, type IpcMain } from "electron";
-import { randomUUID } from "crypto";
 import {
   IpcChannels,
   assertIpcChannel,
@@ -8,25 +7,31 @@ import {
   validateToolApprovalResponse,
   validateUserCommand,
   type CommandCancelResult,
+  type IpcResult,
   type RuntimeStatus,
   type ToolApprovalResult,
   type UserCommandResult,
 } from "../shared/ipc";
+import type { RuntimeClient } from "./runtimeClient";
 
-export function registerIpcHandlers(ipc: IpcMain): void {
+export function registerIpcHandlers(ipc: IpcMain, runtime: RuntimeClient): void {
   ipc.handle(assertIpcChannel(IpcChannels.runtime.ping), () => ok("pong"));
 
-  ipc.handle(assertIpcChannel(IpcChannels.runtime.getStatus), () => ok<RuntimeStatus>({
-    state: "ready",
-    version: app.getVersion(),
-  }));
+  ipc.handle(assertIpcChannel(IpcChannels.runtime.getStatus), async (): Promise<IpcResult<RuntimeStatus>> => {
+    try {
+      return ok<RuntimeStatus>(await runtime.getStatus());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail<RuntimeStatus>("RUNTIME_UNREACHABLE", message);
+    }
+  });
 
   ipc.handle(assertIpcChannel(IpcChannels.command.submit), (_event, payload: unknown) => {
     const result = validateUserCommand(payload);
     if (!result.ok) {
       return result;
     }
-    const accepted: UserCommandResult = { id: randomUUID(), accepted: true };
+    const accepted: UserCommandResult = runtime.submitCommand(result.data.text);
     return ok(accepted);
   });
 
@@ -34,7 +39,7 @@ export function registerIpcHandlers(ipc: IpcMain): void {
     if (typeof payload !== "string" || payload.trim().length === 0) {
       return fail("INVALID_COMMAND_ID", "Command id must be a non-empty string");
     }
-    const result: CommandCancelResult = { id: payload, cancelled: true };
+    const result: CommandCancelResult = runtime.cancelCommand(payload);
     return ok(result);
   });
 
@@ -43,6 +48,7 @@ export function registerIpcHandlers(ipc: IpcMain): void {
     if (!result.ok) {
       return result;
     }
+    runtime.respondApproval(result.data.id, result.data.approved);
     const received: ToolApprovalResult = { id: result.data.id, received: true };
     return ok(received);
   });

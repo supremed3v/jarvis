@@ -3,6 +3,7 @@ module jarvis-pa/services/core
 go 1.24.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mxschmitt/playwright-go v0.6100.0
 	gopkg.in/yaml.v3 v3.0.1

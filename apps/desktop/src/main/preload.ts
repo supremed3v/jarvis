@@ -11,6 +11,7 @@ import type {
   UserCommandResult,
   VoiceEvent,
 } from "../shared/ipc";
+import type { CommandResult, RuntimeEvent, StreamChunk } from "../shared/runtime";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
 // local modules (Electron docs, Process Sandboxing), so channel names are
@@ -20,8 +21,11 @@ const CHANNEL = {
   runtimePing: "jarvis:runtime:ping",
   runtimeGetStatus: "jarvis:runtime:get-status",
   runtimeStatusChanged: "jarvis:runtime:status-changed",
+  runtimeEvent: "jarvis:runtime:event",
   commandSubmit: "jarvis:command:submit",
   commandCancel: "jarvis:command:cancel",
+  commandStream: "jarvis:command:stream",
+  commandResult: "jarvis:command:result",
   toolApprovalRequested: "jarvis:tool:approval-requested",
   toolApprovalResponse: "jarvis:tool:approval-response",
   voiceEvent: "jarvis:voice:event",
@@ -59,6 +63,8 @@ const bridge: JarvisBridge = {
     getStatus: (): Promise<IpcResult<RuntimeStatus>> => invoke(CHANNEL.runtimeGetStatus),
     onStatusChanged: (cb: (status: RuntimeStatus) => void): (() => void) =>
       subscribe<RuntimeStatus>(CHANNEL.runtimeStatusChanged, cb),
+    onEvent: (cb: (event: RuntimeEvent) => void): (() => void) =>
+      subscribe<RuntimeEvent>(CHANNEL.runtimeEvent, cb),
   },
 
   commands: {
@@ -66,6 +72,10 @@ const bridge: JarvisBridge = {
       invoke<UserCommandResult>(CHANNEL.commandSubmit, { text } satisfies UserCommandMessage),
     cancel: (id: string): Promise<IpcResult<CommandCancelResult>> =>
       invoke<CommandCancelResult>(CHANNEL.commandCancel, id),
+    onStream: (cb: (chunk: StreamChunk) => void): (() => void) =>
+      subscribe<StreamChunk>(CHANNEL.commandStream, cb),
+    onResult: (cb: (result: CommandResult) => void): (() => void) =>
+      subscribe<CommandResult>(CHANNEL.commandResult, cb),
   },
 
   tools: {

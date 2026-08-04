@@ -1,4 +1,4 @@
-# Current Feature
+﻿# Current Feature
 
 ## Status: Not Started
 
@@ -8,6 +8,6 @@ No feature loaded. Use the feature workflow's `load` action to load the next spe
 
 ## History
 
-### SPEC-0064 Desktop IPC Architecture (Completed)
+### SPEC-0065 Core Runtime Communication Bridge (Completed)
 
-Typed, secure Electron IPC across main <-> renderer: shared contract (`src/shared/ipc.ts` — channel allowlist + `IpcResult` envelope + payload validators + `JarvisBridge` type), main-process handler registration with allowlist enforcement, sandbox-compatible preload bridge (typed per-domain methods only, never raw `ipcRenderer`), and a plain-script renderer consuming the typed round-trips and pushes. Channels cover user commands, runtime status, tool approvals, and voice events. Verified: 7 unit tests (`npm test`), 12/12 Electron smoke checks, clean real launch, Go workspace unaffected. Fixed a latent SPEC-0063 renderer bug (CommonJS `exports` header in a sandboxed page). Details in `docs/agents/JARVIS_BUILD_TRACKER.md`.
+WebSocket transport between the Electron desktop and the Go runtime, fulfilling SPEC-0065's four requirements (sending tasks to core, receiving events, streaming responses, runtime status updates) via the `container.go` `WSBridge` slot. Go: `services/core/ws_bridge.go` (`Bridge` implements `WSBridge` + `runtime.Dependency`) — JSON frame protocol on `127.0.0.1:42321/ws`, batch/streaming/default-agent command dispatch, EventBus event forwarding, SPEC-0048 ApprovalQueue polling, status pushes on transition + on connect, typed `packages/errors`. Desktop: `src/shared/runtime.ts` wire protocol, `src/main/runtimeClient.ts` client (reconnect, injectable socket), IPC channels `runtime:event`/`command:stream`/`command:result`, real handlers replacing SPEC-0064 stubs. New dependency: `coder/websocket v1.8.15`. Verified: 18 Go bridge tests (full core suite green, a server-push race fixed with a connect barrier), 36 TS tests (Node 20 & 24), `go_all.ps1` build+vet+test clean, `npm run build` clean. Details in `docs/agents/JARVIS_BUILD_TRACKER.md`.

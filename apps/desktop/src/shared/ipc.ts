@@ -1,12 +1,17 @@
+import type { CommandResult, RuntimeEvent, StreamChunk } from "./runtime";
+
 export const IpcChannels = {
   runtime: {
     ping: "jarvis:runtime:ping",
     getStatus: "jarvis:runtime:get-status",
     statusChanged: "jarvis:runtime:status-changed",
+    event: "jarvis:runtime:event",
   },
   command: {
     submit: "jarvis:command:submit",
     cancel: "jarvis:command:cancel",
+    stream: "jarvis:command:stream",
+    result: "jarvis:command:result",
   },
   tool: {
     approvalRequested: "jarvis:tool:approval-requested",
@@ -131,10 +136,13 @@ export interface JarvisBridge {
     ping: () => Promise<IpcResult<string>>;
     getStatus: () => Promise<IpcResult<RuntimeStatus>>;
     onStatusChanged: Subscribe<RuntimeStatus>;
+    onEvent: Subscribe<RuntimeEvent>;
   };
   commands: {
     submit: (text: string) => Promise<IpcResult<UserCommandResult>>;
     cancel: (id: string) => Promise<IpcResult<CommandCancelResult>>;
+    onStream: Subscribe<StreamChunk>;
+    onResult: Subscribe<CommandResult>;
   };
   tools: {
     respond: (response: ToolApprovalResponse) => Promise<IpcResult<ToolApprovalResult>>;
