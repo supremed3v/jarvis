@@ -24,6 +24,7 @@ const defaultOllamaTimeout = 30 * time.Second
 type ollamaGenerateRequest struct {
 	Model   string         `json:"model"`
 	Prompt  string         `json:"prompt"`
+	System  string         `json:"system,omitempty"`
 	Stream  bool           `json:"stream,omitempty"`
 	Options map[string]any `json:"options,omitempty"`
 }
@@ -245,6 +246,7 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 	ollamaReq := ollamaGenerateRequest{
 		Model:   model,
 		Prompt:  req.Prompt,
+		System:  req.System,
 		Options: req.Options,
 	}
 
@@ -290,6 +292,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req GenerateRequest, onChun
 	ollamaReq := ollamaGenerateRequest{
 		Model:   model,
 		Prompt:  req.Prompt,
+		System:  req.System,
 		Stream:  true,
 		Options: req.Options,
 	}

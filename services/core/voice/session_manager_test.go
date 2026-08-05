@@ -182,6 +182,7 @@ func newTestSessionManager(t *testing.T, handler RequestHandler, tts core.TTSPro
 	mic := NewMicrophone(engine, wakeWord, &mockSTTProvider{}, bus, log)
 	cfg := config.Defaults()
 
+	opts = append([]SessionManagerOption{WithAccumTimeout(0)}, opts...)
 	sm, err := NewSessionManager(mic, engine, tts, &cfg.Voice, bus, handler, log, opts...)
 	if err != nil {
 		t.Fatalf("NewSessionManager() error = %v", err)
@@ -242,7 +243,7 @@ func TestSessionManager_CompletesFullCycle(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "turn on the lights", "final": true},
+		Payload: map[string]any{"text": "turn on the lights", "final": true, "confidence": 1.0},
 	})
 
 	waitForEvent(t, completed, "EventSessionCompleted")
@@ -294,7 +295,7 @@ func TestSessionManager_PublishesProcessingAndSpeaking(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "turn on the lights", "final": true},
+		Payload: map[string]any{"text": "turn on the lights", "final": true, "confidence": 1.0},
 	})
 
 	processingEvent := waitForEvent(t, processing, "EventSessionProcessing")
@@ -332,7 +333,7 @@ func TestSessionManager_IgnoresTranscriptWithoutActiveSession(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "stray audio", "final": true},
+		Payload: map[string]any{"text": "stray audio", "final": true, "confidence": 1.0},
 	})
 
 	time.Sleep(200 * time.Millisecond)
@@ -363,7 +364,7 @@ func TestSessionManager_FailsWhenHandlerErrors(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "do something", "final": true},
+		Payload: map[string]any{"text": "do something", "final": true, "confidence": 1.0},
 	})
 
 	event := waitForEvent(t, failed, "EventSessionFailed")
@@ -403,7 +404,7 @@ func TestSessionManager_EmptyTranscriptEndsSessionWithoutHandler(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "", "final": true},
+		Payload: map[string]any{"text": "", "final": true, "confidence": 1.0},
 	})
 
 	event := waitForEvent(t, failed, "EventSessionFailed")
@@ -542,7 +543,7 @@ func TestSessionManager_StreamingHandler_SpeaksSentencesAsTheyComplete(t *testin
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "turn on the lights", "final": true},
+		Payload: map[string]any{"text": "turn on the lights", "final": true, "confidence": 1.0},
 	})
 
 	waitForEvent(t, completed, "EventSessionCompleted")
@@ -582,7 +583,7 @@ func TestSessionManager_StreamingHandler_FailsOnSynthesisError(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "hello", "final": true},
+		Payload: map[string]any{"text": "hello", "final": true, "confidence": 1.0},
 	})
 
 	event := waitForEvent(t, failed, "EventSessionFailed")
@@ -616,7 +617,7 @@ func TestSessionManager_StreamingHandler_FailsWhenHandlerErrors(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "do something", "final": true},
+		Payload: map[string]any{"text": "do something", "final": true, "confidence": 1.0},
 	})
 
 	event := waitForEvent(t, failed, "EventSessionFailed")
@@ -662,7 +663,7 @@ func TestSessionManager_StreamingHandler_PlaybackFailureDoesNotDeadlock(t *testi
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "hello", "final": true},
+		Payload: map[string]any{"text": "hello", "final": true, "confidence": 1.0},
 	})
 
 	event := waitForEvent(t, failed, "EventSessionFailed")
@@ -747,7 +748,7 @@ func TestSessionManager_BargeIn_InterruptsDuringBatchHandler(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "turn on the lights", "final": true},
+		Payload: map[string]any{"text": "turn on the lights", "final": true, "confidence": 1.0},
 	})
 
 	time.Sleep(50 * time.Millisecond)
@@ -815,7 +816,7 @@ func TestSessionManager_BargeIn_InterruptsDuringBatchPlayback(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "what time is it", "final": true},
+		Payload: map[string]any{"text": "what time is it", "final": true, "confidence": 1.0},
 	})
 
 	time.Sleep(50 * time.Millisecond)
@@ -870,7 +871,7 @@ func TestSessionManager_BargeIn_InterruptsDuringStreamingPlayback(t *testing.T) 
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "tell me about X", "final": true},
+		Payload: map[string]any{"text": "tell me about X", "final": true, "confidence": 1.0},
 	})
 
 	time.Sleep(50 * time.Millisecond)
@@ -905,7 +906,7 @@ func TestSessionManager_BargeIn_ContextPreserved(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "what is the weather", "final": true},
+		Payload: map[string]any{"text": "what is the weather", "final": true, "confidence": 1.0},
 	})
 
 	time.Sleep(50 * time.Millisecond)
@@ -948,7 +949,7 @@ func TestSessionManager_BargeIn_ContextClearedAfterNormalCompletion(t *testing.T
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "first", "final": true},
+		Payload: map[string]any{"text": "first", "final": true, "confidence": 1.0},
 	})
 	time.Sleep(50 * time.Millisecond)
 
@@ -966,7 +967,7 @@ func TestSessionManager_BargeIn_ContextClearedAfterNormalCompletion(t *testing.T
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "second", "final": true},
+		Payload: map[string]any{"text": "second", "final": true, "confidence": 1.0},
 	})
 	waitForEvent(t, completed, "EventSessionCompleted")
 
@@ -1021,7 +1022,7 @@ func TestSessionManager_BargeIn_StopCancelsActiveRequest(t *testing.T) {
 	bus.Publish(types.Event{
 		Type:    EventVoiceTranscript,
 		Source:  "test",
-		Payload: map[string]any{"text": "do something", "final": true},
+		Payload: map[string]any{"text": "do something", "final": true, "confidence": 1.0},
 	})
 	time.Sleep(50 * time.Millisecond)
 
@@ -1057,7 +1058,7 @@ func TestSessionManager_BargeIn_RapidInterruptionsDoNotDeadlock(t *testing.T) {
 		bus.Publish(types.Event{
 			Type:    EventVoiceTranscript,
 			Source:  "test",
-			Payload: map[string]any{"text": fmt.Sprintf("request-%d", i), "final": true},
+			Payload: map[string]any{"text": fmt.Sprintf("request-%d", i), "final": true, "confidence": 1.0},
 		})
 		time.Sleep(30 * time.Millisecond)
 	}

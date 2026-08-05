@@ -32,11 +32,12 @@ type Microphone struct {
 	wakeCh    chan []byte
 	sttCh     chan []byte
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	running bool
-	mu      sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	running  bool
+	sttMuted bool
+	mu       sync.Mutex
 }
 
 // NewMicrophone creates a new Microphone. bus may be nil, in which case
@@ -135,9 +136,14 @@ func (m *Microphone) Start() error {
 				case m.wakeCh <- chunk:
 				default:
 				}
-				select {
-				case m.sttCh <- chunk:
-				default:
+				m.mu.Lock()
+				muted := m.sttMuted
+				m.mu.Unlock()
+				if !muted {
+					select {
+					case m.sttCh <- chunk:
+					default:
+					}
 				}
 			case <-m.ctx.Done():
 				return
@@ -148,6 +154,21 @@ func (m *Microphone) Start() error {
 	m.running = true
 	m.log.Info("voice: microphone started", nil)
 	return nil
+}
+
+// MuteSTT suppresses forwarding audio to the STT provider. Wake word
+// detection continues unaffected.
+func (m *Microphone) MuteSTT() {
+	m.mu.Lock()
+	m.sttMuted = true
+	m.mu.Unlock()
+}
+
+// UnmuteSTT resumes forwarding audio to the STT provider.
+func (m *Microphone) UnmuteSTT() {
+	m.mu.Lock()
+	m.sttMuted = false
+	m.mu.Unlock()
 }
 
 // Stop stops audio capture.

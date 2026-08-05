@@ -30,7 +30,7 @@ const piperReadBufferSize = 32 * 1024
 // caller leaves it at its zero value - VoiceOptions' documented convention
 // for "use the provider's default" - chosen slower than Piper's natural 1x
 // pace, which testing found came out clearer as a project-wide default.
-const defaultSpeechSpeed = 0.8
+const defaultSpeechSpeed = 1.0
 
 // PiperProvider implements core.TTSProvider using the Piper binary
 // (SPEC-0059's local voice generation requirement), run as a one-shot

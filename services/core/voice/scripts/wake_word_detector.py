@@ -15,6 +15,7 @@ Usage:
 import argparse
 import struct
 import sys
+import time
 from typing import Optional
 
 try:
@@ -47,9 +48,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("model_path")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--cooldown", type=float, default=2.0)
     args = parser.parse_args()
 
     model = Model(wakeword_models=[args.model_path])
+    last_detection = 0.0
 
     while True:
         frame = read_frame()
@@ -59,8 +62,11 @@ def main() -> None:
             continue
         samples = np.frombuffer(frame, dtype=np.int16)
         predictions = model.predict(samples)
+        now = time.monotonic()
         if any(score >= args.threshold for score in predictions.values()):
-            print("DETECTED", flush=True)
+            if now - last_detection >= args.cooldown:
+                print("DETECTED", flush=True)
+                last_detection = now
 
 
 if __name__ == "__main__":

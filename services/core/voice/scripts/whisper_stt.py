@@ -71,16 +71,23 @@ def load_model(model_size: str, device: str) -> WhisperModel:
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
+MAX_NO_SPEECH_PROB = 0.6
+
+
 def transcribe_segment(model: WhisperModel, pcm: bytes, language: str) -> Tuple[str, float]:
     """Transcribes one PCM buffer, returning (text, confidence). confidence
     is the mean of exp(avg_logprob) across segments faster-whisper found (0
-    if it found none, i.e. silence)."""
+    if it found none, i.e. silence). Segments where faster-whisper's
+    no_speech_prob exceeds MAX_NO_SPEECH_PROB are dropped — they almost
+    always represent silence hallucinations ("You", "Thank you", etc.)."""
     audio = pcm_to_float32(pcm)
     segments, _info = model.transcribe(audio, language=language or None)
 
     texts = []
     logprobs = []
     for segment in segments:
+        if segment.no_speech_prob > MAX_NO_SPEECH_PROB:
+            continue
         texts.append(segment.text.strip())
         logprobs.append(segment.avg_logprob)
 
@@ -125,6 +132,14 @@ def read_frame() -> Optional[bytes]:
     return payload
 
 
+def rms_energy(pcm: bytes) -> float:
+    """Returns the RMS energy of a raw int16 LE PCM buffer."""
+    if len(pcm) < 2:
+        return 0.0
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float64)
+    return float(np.sqrt(np.mean(samples ** 2)))
+
+
 def cmd_stream(args: argparse.Namespace) -> None:
     model = load_model(args.model, args.device)
     segment_bytes = int(args.sample_rate * args.segment_seconds) * 2  # int16 = 2 bytes/sample
@@ -138,15 +153,17 @@ def cmd_stream(args: argparse.Namespace) -> None:
             continue
         buf.extend(frame)
         if len(buf) >= segment_bytes:
-            text, confidence = transcribe_segment(model, bytes(buf), args.language)
-            if text:
-                write_result(text, confidence, done=True)
+            if rms_energy(bytes(buf)) >= args.energy_threshold:
+                text, confidence = transcribe_segment(model, bytes(buf), args.language)
+                if text:
+                    write_result(text, confidence, done=True)
             buf.clear()
 
     if buf:
-        text, confidence = transcribe_segment(model, bytes(buf), args.language)
-        if text:
-            write_result(text, confidence, done=True)
+        if rms_energy(bytes(buf)) >= args.energy_threshold:
+            text, confidence = transcribe_segment(model, bytes(buf), args.language)
+            if text:
+                write_result(text, confidence, done=True)
 
 
 def main() -> None:
@@ -164,6 +181,7 @@ def main() -> None:
     stream_parser.add_argument("--device", default="cpu")
     stream_parser.add_argument("--sample-rate", type=int, default=16000)
     stream_parser.add_argument("--segment-seconds", type=float, default=3.0)
+    stream_parser.add_argument("--energy-threshold", type=float, default=1000.0)
 
     args = parser.parse_args()
 

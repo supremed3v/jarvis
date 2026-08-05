@@ -26,7 +26,7 @@ import (
 // script's module docstring for why Whisper's lack of true incremental
 // decoding makes fixed-length segments, not word-by-word partials, the
 // standard way to get streaming-shaped output from it).
-const streamSegmentSeconds = 3.0
+const streamSegmentSeconds = 2.0
 
 //go:embed scripts/whisper_stt.py
 var whisperSTTScript []byte

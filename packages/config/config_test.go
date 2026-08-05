@@ -142,23 +142,23 @@ func TestLoad_ValidationRejectsOutOfRangePort(t *testing.T) {
 }
 
 func TestModelConfig_ModelFor(t *testing.T) {
-	mc := Defaults().Model // general: qwen, coding: qwen-coder, default "general"
+	mc := Defaults().Model // general: qwen2.5-coder:14b, coding: qwen2.5-coder:14b, default "general"
 	mc.AgentModels = map[string]string{"developer-agent": "coding"}
 
 	got, err := mc.ModelFor("developer-agent")
 	if err != nil {
 		t.Fatalf("ModelFor(developer-agent) returned error: %v", err)
 	}
-	if got.Name != "qwen-coder" {
-		t.Errorf("ModelFor(developer-agent).Name = %q, want %q (agent override)", got.Name, "qwen-coder")
+	if got.Name != "qwen2.5-coder:14b" {
+		t.Errorf("ModelFor(developer-agent).Name = %q, want %q (agent override)", got.Name, "qwen2.5-coder:14b")
 	}
 
 	got, err = mc.ModelFor("core-agent")
 	if err != nil {
 		t.Fatalf("ModelFor(core-agent) returned error: %v", err)
 	}
-	if got.Name != "qwen" {
-		t.Errorf("ModelFor(core-agent).Name = %q, want %q (falls back to DefaultModel)", got.Name, "qwen")
+	if got.Name != "qwen2.5-coder:14b" {
+		t.Errorf("ModelFor(core-agent).Name = %q, want %q (falls back to DefaultModel)", got.Name, "qwen2.5-coder:14b")
 	}
 }
 
@@ -229,8 +229,8 @@ func TestLoad_AgentModelOverrideAppliesFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ModelFor(developer-agent) returned error: %v", err)
 	}
-	if model.Name != "qwen-coder" {
-		t.Errorf("ModelFor(developer-agent).Name = %q, want %q", model.Name, "qwen-coder")
+	if model.Name != "qwen2.5-coder:14b" {
+		t.Errorf("ModelFor(developer-agent).Name = %q, want %q", model.Name, "qwen2.5-coder:14b")
 	}
 }
 

@@ -133,12 +133,12 @@ func Defaults() Config {
 			Models: map[string]Model{
 				"general": {
 					Provider:    "ollama",
-					Name:        "qwen",
+					Name:        "qwen2.5-coder:14b",
 					Temperature: 0.7,
 				},
 				"coding": {
 					Provider:    "ollama",
-					Name:        "qwen-coder",
+					Name:        "qwen2.5-coder:14b",
 					Temperature: 0.2,
 				},
 			},
@@ -151,10 +151,10 @@ func Defaults() Config {
 		},
 		Voice: VoiceConfig{
 			WakeWordModelPath: "models/hey_jarvis.onnx",
-			STTModel:          "base.en",
+			STTModel:          "small.en",
 			STTLanguage:       "en",
 			STTDevice:         "cpu",
-			TTSModel:          "models/jarvis-high",
+			TTSModel:          "models/en_GB-alan-medium",
 			AudioDevice:       "default",
 			SampleRate:        16000,
 			TTSSampleRate:     22050,

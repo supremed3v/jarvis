@@ -29,6 +29,12 @@ import (
 // covering the case where the wake word fires but no speech follows).
 const defaultSessionTimeout = 15 * time.Second
 
+// defaultAccumTimeout is how long handleTranscript waits for more speech
+// segments before sending the accumulated transcript to the LLM. This
+// prevents the 3-second Whisper segments from splitting a single utterance
+// into multiple LLM calls.
+const defaultAccumTimeout = 3500 * time.Millisecond
+
 // Session lifecycle event types, published on the SessionManager's
 // EventBus (SPEC-0060's "sessions start correctly"/"sessions complete
 // correctly"/"resources are released" testing criteria).
@@ -150,6 +156,10 @@ type SessionManager struct {
 
 	interruptedTurn *InterruptedTurn
 
+	accumBuf      strings.Builder
+	accumTimer    *time.Timer
+	accumTimeout  time.Duration
+
 	unsubWake       func()
 	unsubTranscript func()
 }
@@ -164,6 +174,12 @@ type SessionManagerOption func(*SessionManager)
 // defaultSessionTimeout.
 func WithSessionTimeout(d time.Duration) SessionManagerOption {
 	return func(sm *SessionManager) { sm.sessionTimeout = d }
+}
+
+// WithAccumTimeout overrides how long SessionManager waits for additional
+// transcript segments before processing the accumulated text.
+func WithAccumTimeout(d time.Duration) SessionManagerOption {
+	return func(sm *SessionManager) { sm.accumTimeout = d }
 }
 
 // WithStreamingHandler configures a StreamingRequestHandler
@@ -222,6 +238,7 @@ func NewSessionManager(mic *Microphone, engine core.VoiceEngine, tts core.TTSPro
 		handler:        handler,
 		log:            log,
 		sessionTimeout: defaultSessionTimeout,
+		accumTimeout:   defaultAccumTimeout,
 	}
 	for _, opt := range opts {
 		opt(sm)
@@ -409,15 +426,25 @@ func (sm *SessionManager) watchTimeout(sessionID string, doneCh <-chan struct{})
 	}
 }
 
-// handleTranscript advances the active Session's STT state on a final
-// EventVoiceTranscript (SPEC-0060's "STT state" requirement): a non-final
-// chunk, or a transcript arriving with no Session in SessionStateListening
-// (no wake word gated it), is ignored. An empty final transcript ends the
-// session without invoking RequestHandler (nothing was said); otherwise the
-// transcript is handed off to processRequest.
+// minTranscriptConfidence is the minimum confidence score a transcript must
+// have to be acted on. Below this, Whisper is likely hallucinating on
+// silence or background noise.
+const minTranscriptConfidence = 0.4
+
+// handleTranscript accumulates transcript segments while the session is
+// listening. Each final transcript is appended to a buffer; a timer resets
+// on every new segment. When the timer fires (no new speech for
+// accumTimeout), the full accumulated text is handed to processRequest.
+// This prevents Whisper's fixed-length segments from splitting a single
+// utterance into multiple LLM calls.
 func (sm *SessionManager) handleTranscript(event types.Event) {
 	final, _ := event.Payload["final"].(bool)
 	if !final {
+		return
+	}
+
+	confidence, _ := event.Payload["confidence"].(float64)
+	if confidence < minTranscriptConfidence {
 		return
 	}
 
@@ -427,7 +454,47 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 		sm.mu.Unlock()
 		return
 	}
+
 	text, _ := event.Payload["text"].(string)
+	trimmed := strings.TrimSpace(text)
+
+	// Empty transcript with nothing accumulated: let processRequest handle
+	// the empty-text case (session ends without calling the handler).
+	if trimmed == "" && sm.accumBuf.Len() == 0 {
+		sm.dispatchTranscript(session, "")
+		return
+	}
+	if trimmed == "" {
+		sm.mu.Unlock()
+		return
+	}
+
+	if sm.accumBuf.Len() > 0 {
+		sm.accumBuf.WriteString(" ")
+	}
+	sm.accumBuf.WriteString(trimmed)
+
+	if sm.accumTimeout <= 0 {
+		accumulated := sm.accumBuf.String()
+		sm.accumBuf.Reset()
+		sm.dispatchTranscript(session, accumulated)
+		return
+	}
+
+	if sm.accumTimer != nil {
+		sm.accumTimer.Stop()
+	}
+	sessionID := session.ID
+	sm.accumTimer = time.AfterFunc(sm.accumTimeout, func() {
+		sm.flushAccumulatedTranscript(sessionID)
+	})
+	sm.mu.Unlock()
+}
+
+// dispatchTranscript transitions session from listening to processing and
+// calls processRequest. Must be called with sm.mu held; it unlocks before
+// calling processRequest.
+func (sm *SessionManager) dispatchTranscript(session *Session, text string) {
 	session.State = SessionStateProcessing
 	session.Transcript = text
 	if sm.activeDone != nil {
@@ -443,8 +510,26 @@ func (sm *SessionManager) handleTranscript(event types.Event) {
 	sm.mu.Unlock()
 
 	sm.publish(EventSessionProcessing, map[string]any{"sessionId": session.ID, "transcript": text})
-
 	sm.processRequest(session, text, ctx, cancel, doneCh, gen)
+}
+
+// flushAccumulatedTranscript processes the buffered transcript text once
+// the accumulation window has elapsed with no new segments.
+func (sm *SessionManager) flushAccumulatedTranscript(sessionID string) {
+	sm.mu.Lock()
+	session := sm.session
+	if session == nil || session.ID != sessionID || session.State != SessionStateListening {
+		sm.accumBuf.Reset()
+		sm.accumTimer = nil
+		sm.mu.Unlock()
+		return
+	}
+
+	text := strings.TrimSpace(sm.accumBuf.String())
+	sm.accumBuf.Reset()
+	sm.accumTimer = nil
+
+	sm.dispatchTranscript(session, text)
 }
 
 // processRequest carries out SPEC-0060's "Process Request", "Generate
@@ -510,7 +595,9 @@ func (sm *SessionManager) processRequest(session *Session, text string, ctx cont
 		return
 	}
 
+	sm.mic.MuteSTT()
 	if err := sm.engine.PlaybackStream(ctx, sliceToChannel(audio), sm.cfg.TTSSampleRate); err != nil {
+		sm.mic.UnmuteSTT()
 		if ctx.Err() != nil {
 			if !sm.isStopping() {
 				sm.interruptSession(session, text, response)
@@ -522,6 +609,7 @@ func (sm *SessionManager) processRequest(session *Session, text string, ctx cont
 		return
 	}
 
+	sm.mic.UnmuteSTT()
 	sm.finishSession(session, EventSessionCompleted, "")
 }
 
@@ -669,6 +757,8 @@ func (sm *SessionManager) speakSentence(ctx context.Context, sentence string) er
 	sentenceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	sm.mic.MuteSTT()
+
 	audioCh := make(chan []byte, streamAudioBufferSize)
 	synthDone := make(chan error, 1)
 	go func() {
@@ -679,6 +769,9 @@ func (sm *SessionManager) speakSentence(ctx context.Context, sentence string) er
 	playbackErr := sm.engine.PlaybackStream(sentenceCtx, audioCh, sm.cfg.TTSSampleRate)
 	cancel()
 	synthErr := <-synthDone
+
+	sm.mic.UnmuteSTT()
+
 	if playbackErr != nil {
 		return playbackErr
 	}
@@ -788,6 +881,11 @@ func (sm *SessionManager) clearSessionIfID(id string) *Session {
 		close(sm.activeDone)
 		sm.activeDone = nil
 	}
+	if sm.accumTimer != nil {
+		sm.accumTimer.Stop()
+		sm.accumTimer = nil
+	}
+	sm.accumBuf.Reset()
 	return session
 }
 

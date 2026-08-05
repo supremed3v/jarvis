@@ -20,6 +20,7 @@ import (
 type GenerateRequest struct {
 	Model   string
 	Prompt  string
+	System  string
 	Options map[string]any
 }
 
