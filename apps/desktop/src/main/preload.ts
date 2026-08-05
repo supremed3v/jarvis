@@ -20,6 +20,7 @@ import type { Settings, SettingsPatch } from "../shared/settings";
 import type { VoiceUiSnapshot } from "../shared/voice";
 import type { AgentDashboardState } from "../shared/agents";
 import type { MemoryViewerState } from "../shared/memory";
+import type { LogsViewerState } from "../shared/logs";
 
 // Sandboxed preload scripts run as a single bundled file and cannot require
 // local modules (Electron docs, Process Sandboxing), so channel names are
@@ -48,6 +49,9 @@ const CHANNEL = {
   memoryUpdate: "jarvis:memory:update",
   memoryDelete: "jarvis:memory:delete",
   memoryUpdated: "jarvis:memory:updated",
+  logsList: "jarvis:logs:list",
+  logsClear: "jarvis:logs:clear",
+  logsUpdated: "jarvis:logs:updated",
 } as const;
 
 function invoke<T>(channel: string, payload?: unknown): Promise<IpcResult<T>> {
@@ -136,6 +140,15 @@ const bridge: JarvisBridge = {
       invoke<MemoryDeleteRequest>(CHANNEL.memoryDelete, request),
     onUpdated: (cb: (snapshot: MemoryViewerState) => void): (() => void) =>
       subscribe<MemoryViewerState>(CHANNEL.memoryUpdated, cb),
+  },
+
+  logs: {
+    list: (): Promise<IpcResult<LogsViewerState>> =>
+      invoke<LogsViewerState>(CHANNEL.logsList),
+    clear: (): Promise<IpcResult<LogsViewerState>> =>
+      invoke<LogsViewerState>(CHANNEL.logsClear),
+    onUpdated: (cb: (snapshot: LogsViewerState) => void): (() => void) =>
+      subscribe<LogsViewerState>(CHANNEL.logsUpdated, cb),
   },
 };
 

@@ -3,6 +3,7 @@ import type { Settings, SettingsPatch } from "./settings";
 import type { VoiceUiSnapshot } from "./voice";
 import type { AgentDashboardState } from "./agents";
 import type { MemoryViewerState } from "./memory";
+import type { LogsViewerState } from "./logs";
 
 export const IpcChannels = {
   runtime: {
@@ -40,6 +41,11 @@ export const IpcChannels = {
     update: "jarvis:memory:update",
     delete: "jarvis:memory:delete",
     updated: "jarvis:memory:updated",
+  },
+  logs: {
+    list: "jarvis:logs:list",
+    clear: "jarvis:logs:clear",
+    updated: "jarvis:logs:updated",
   },
 } as const;
 
@@ -294,5 +300,10 @@ export interface JarvisBridge {
     update: (request: MemoryUpdateRequest) => Promise<IpcResult<MemoryUpdateRequest>>;
     delete: (request: MemoryDeleteRequest) => Promise<IpcResult<MemoryDeleteRequest>>;
     onUpdated: Subscribe<MemoryViewerState>;
+  };
+  logs: {
+    list: () => Promise<IpcResult<LogsViewerState>>;
+    clear: () => Promise<IpcResult<LogsViewerState>>;
+    onUpdated: Subscribe<LogsViewerState>;
   };
 }

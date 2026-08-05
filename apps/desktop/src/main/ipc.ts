@@ -22,6 +22,7 @@ import {
 } from "../shared/ipc";
 import type { AgentDashboardState, AgentUiStore } from "../shared/agents";
 import type { MemoryUiStore, MemoryViewerState } from "../shared/memory";
+import type { LogUiStore, LogsViewerState } from "../shared/logs";
 import type { Settings, SettingsPatch } from "../shared/settings";
 import type { RuntimeClient } from "./runtimeClient";
 import type { SettingsStore } from "./settingsStore";
@@ -35,6 +36,7 @@ export function registerIpcHandlers(
   memory: MemoryUiStore,
   applyMemoryUpdate: (request: MemoryUpdateRequest) => Promise<IpcResult<MemoryUpdateRequest>>,
   applyMemoryDelete: (request: MemoryDeleteRequest) => Promise<IpcResult<MemoryDeleteRequest>>,
+  logs: LogUiStore,
 ): void {
   ipc.handle(assertIpcChannel(IpcChannels.runtime.ping), () => ok("pong"));
 
@@ -171,6 +173,16 @@ export function registerIpcHandlers(
       }
       return applyMemoryDelete(validated.data);
     },
+  );
+
+  ipc.handle(
+    assertIpcChannel(IpcChannels.logs.list),
+    (): IpcResult<LogsViewerState> => ok(logs.current),
+  );
+
+  ipc.handle(
+    assertIpcChannel(IpcChannels.logs.clear),
+    (): IpcResult<LogsViewerState> => ok(logs.clear()),
   );
 }
 

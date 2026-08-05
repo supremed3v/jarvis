@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS Logs</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .page {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      font-size: 1.2rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #00d4ff;
+    }
+    .subtitle { font-size: 0.75rem; color: #777; }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .controls input[type="text"] {
+      flex: 1;
+      min-width: 160px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      color: #e0e0e0;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .controls input[type="text"]::placeholder { color: #777; }
+    .controls input[type="text"]:focus { border-color: #00d4ff; }
+    .controls select {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #24243d;
+      color: #e0e0e0;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .controls button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #00d4ff;
+      background: transparent;
+      color: #00d4ff;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .controls button:hover { background: rgba(0, 212, 255, 0.12); }
+    .controls button:disabled { opacity: 0.5; cursor: default; }
+    .controls button.danger {
+      border-color: rgba(255, 84, 84, 0.5);
+      color: #ffb4b4;
+    }
+    .controls button.danger:hover { background: rgba(255, 84, 84, 0.12); }
+    .error-banner {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(255, 84, 84, 0.12);
+      border: 1px solid rgba(255, 84, 84, 0.4);
+      color: #ffb4b4;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .error-banner.visible { display: block; }
+    .empty {
+      padding: 24px;
+      text-align: center;
+      color: #999;
+      font-size: 0.9rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px dashed rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+    .log-entry {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.85rem;
+    }
+    .log-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .log-category {
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: rgba(0, 212, 255, 0.14);
+      color: #00d4ff;
+    }
+    .log-category.agent { background: rgba(250, 204, 21, 0.14); color: #facc15; }
+    .log-category.tool { background: rgba(110, 231, 160, 0.16); color: #6ee7a0; }
+    .log-category.error { background: rgba(255, 84, 84, 0.18); color: #ff7b7b; }
+    .log-event-type {
+      font-weight: 600;
+      font-size: 0.78rem;
+      color: #bbb;
+      font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+    }
+    .log-source {
+      font-size: 0.72rem;
+      color: #777;
+    }
+    .log-time {
+      font-size: 0.72rem;
+      color: #666;
+      margin-left: auto;
+    }
+    .log-message {
+      font-size: 0.85rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #ccc;
+    }
+    .log-payload {
+      font-size: 0.75rem;
+      font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+      color: #888;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 6px 10px;
+      border-radius: 6px;
+      max-height: 120px;
+      overflow-y: auto;
+      display: none;
+    }
+    .log-payload.visible { display: block; }
+    .log-toggle {
+      font-size: 0.72rem;
+      color: #00d4ff;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .log-toggle:hover { color: #4de5ff; }
+  </style>
+</head>
+<body>
+  <div class="page" id="page">
+    <header>
+      <h1>JARVIS Logs</h1>
+      <span class="subtitle" id="subtitle"></span>
+    </header>
+
+    <div class="controls">
+      <input type="text" id="search" placeholder="Search logs…">
+      <select id="filter">
+        <option value="">All categories</option>
+        <option value="system">System</option>
+        <option value="agent">Agent</option>
+        <option value="tool">Tool</option>
+        <option value="error">Error</option>
+      </select>
+      <button id="clearButton" class="danger">Clear</button>
+    </div>
+
+    <p class="error-banner" id="error"></p>
+
+    <div id="list"></div>
+  </div>
+  <script src="logsRenderer.js"></script>
+</body>
+</html>

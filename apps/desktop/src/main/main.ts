@@ -17,6 +17,7 @@ import { SettingsStore } from "./settingsStore";
 import { AgentStore } from "./agentStore";
 import { AgentUiStore } from "../shared/agents";
 import { MemoryUiStore } from "../shared/memory";
+import { LogUiStore } from "../shared/logs";
 import { VoiceUiStore, isVoiceEventType } from "../shared/voice";
 import { createJarvisTray, type JarvisTray } from "./tray";
 
@@ -24,10 +25,12 @@ let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let agentsWindow: BrowserWindow | null = null;
 let memoryWindow: BrowserWindow | null = null;
+let logsWindow: BrowserWindow | null = null;
 let runtimeClient: RuntimeClient | null = null;
 let voiceStore: VoiceUiStore = new VoiceUiStore();
 let agents: AgentUiStore = new AgentUiStore();
 let memoryStore: MemoryUiStore = new MemoryUiStore();
+let logsStore: LogUiStore = new LogUiStore();
 let agentStore: AgentStore | null = null;
 let tray: JarvisTray | null = null;
 let voiceModeActive = false;
@@ -218,6 +221,51 @@ function showMemoryWindow(): void {
   }
   memoryWindow.show();
   memoryWindow.focus();
+}
+
+function createLogsWindow(): void {
+  logsWindow = new BrowserWindow({
+    width: 860,
+    height: 680,
+    minWidth: 600,
+    minHeight: 420,
+    title: "JARVIS Logs",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  logsWindow.loadFile(path.join(__dirname, "..", "renderer", "logs.html"));
+
+  logsWindow.webContents.on("did-finish-load", () => {
+    if (logsWindow) {
+      broadcast(logsWindow, IpcChannels.logs.updated, logsStore.current);
+    }
+  });
+
+  logsWindow.once("ready-to-show", () => {
+    logsWindow?.show();
+  });
+
+  logsWindow.on("closed", () => {
+    logsWindow = null;
+  });
+}
+
+function showLogsWindow(): void {
+  if (logsWindow === null) {
+    createLogsWindow();
+    return;
+  }
+  if (logsWindow.isMinimized()) {
+    logsWindow.restore();
+  }
+  logsWindow.show();
+  logsWindow.focus();
 }
 
 function rebuildTray(): void {
@@ -434,6 +482,8 @@ function createRuntimeClient(): RuntimeClient {
           return;
         }
         forwardToRenderer(IpcChannels.runtime.event, event);
+        logsStore.ingestEvent(event);
+        broadcastToAll(IpcChannels.logs.updated, logsStore.current);
       },
       onStreamChunk: (chunk) => forwardToRenderer(IpcChannels.command.stream, chunk),
       onCommandResult: (result) => forwardToRenderer(IpcChannels.command.result, result),
@@ -475,6 +525,7 @@ app.whenReady().then(() => {
     memoryStore,
     applyMemoryUpdate,
     applyMemoryDelete,
+    logsStore,
   );
   createAgentStore();
   runtimeClient.connect();
@@ -487,6 +538,7 @@ app.whenReady().then(() => {
       settings: showSettingsWindow,
       agents: showAgentsWindow,
       memory: showMemoryWindow,
+      logs: showLogsWindow,
       voice: () => {
         void toggleVoiceMode();
       },

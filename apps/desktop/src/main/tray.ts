@@ -17,6 +17,7 @@ export interface TrayHandlers {
   settings: () => void;
   agents: () => void;
   memory: () => void;
+  logs: () => void;
   voice: () => void;
   quit: () => void;
 }
@@ -47,6 +48,9 @@ export function createJarvisTray(handlers: TrayHandlers): JarvisTray {
         break;
       case "memory":
         handlers.memory();
+        break;
+      case "logs":
+        handlers.logs();
         break;
       case "voice":
         handlers.voice();
