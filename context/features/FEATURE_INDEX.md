@@ -1276,7 +1276,7 @@ SPEC-0075-search-query-planner.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
