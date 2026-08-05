@@ -1242,7 +1242,7 @@ SPEC-0073-web-search-provider-interface.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -1259,7 +1259,7 @@ SPEC-0074-searxng-integration.md
 
 Status:
 
-Planned
+Completed
 
 
 ---
@@ -3090,6 +3090,23 @@ File:
 
 ```
 SPEC-0182-platform-documentation.md
+```
+
+
+Status:
+
+Planned
+
+
+---
+
+## SPEC-0200 — Runtime Entrypoint
+
+
+File:
+
+```
+SPEC-0200-runtime-entrypoint.md
 ```
 
 
